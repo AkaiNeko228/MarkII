@@ -286,7 +286,7 @@ impl Dashboard {
             .gap(px(14.))
             .text_size(px(11.))
             .text_color(c(DIM))
-            .child(src("Windows", true, "carga · clocks · RAM · discos · rede"))
+            .child(src(if cfg!(windows) { "Windows" } else { "Linux" }, true, "carga · clocks · RAM · discos · rede"))
             .child(src("NVML", t.gpu.error.is_none(), if t.gpu.error.is_some() { "sem GPU NVIDIA" } else { "GPU" }))
             .child(src(
                 "Sensores",
@@ -436,7 +436,7 @@ impl Dashboard {
                 .flex_col()
                 .gap(px(7.))
                 .child(line("Sistema", sub(name, format!("placa {} {}", pc.board_maker, pc.board))))
-                .child(line("Windows", sub(pc.os.replace("Microsoft ", ""), pc.os_build.clone())))
+                .child(line(if cfg!(windows) { "Windows" } else { "Sistema" }, sub(pc.os.replace("Microsoft ", ""), pc.os_build.clone())))
                 .child(line("BIOS", div().child(pc.bios.clone()).into_any_element()))
                 .child(line(
                     "CPU",
@@ -824,13 +824,19 @@ impl Dashboard {
                             .child(cool_opt("c-water", "water", "Water cooler")),
                     )
                     .child(h3("Sensores"))
-                    .child(toggle("t-admin", "Pedir administrador (UAC) ao abrir: CPU, ventoinhas e placa-mãe", s.sensors_admin, |s| s.sensors_admin = !s.sensors_admin))
+                    .when(cfg!(windows), |d| {
+                        d.child(toggle("t-admin", "Pedir administrador (UAC) ao abrir: CPU, ventoinhas e placa-mãe", s.sensors_admin, |s| s.sensors_admin = !s.sensors_admin))
+                    })
                     .child(small(
-                        format!(
-                            "Estado: {} · driver PawnIO {}",
-                            self.t.as_ref().map_or("—".to_string(), |t| t.lhm_msg.clone()),
-                            if markii_core::lhm::pawnio_installed() { "instalado" } else { "não instalado" }
-                        ),
+                        if cfg!(windows) {
+                            format!(
+                                "Estado: {} · driver PawnIO {}",
+                                self.t.as_ref().map_or("—".to_string(), |t| t.lhm_msg.clone()),
+                                if markii_core::lhm::pawnio_installed() { "instalado" } else { "não instalado" }
+                            )
+                        } else {
+                            format!("Estado: {} · sensores do kernel (hwmon/lm-sensors)", self.t.as_ref().map_or("—".to_string(), |t| t.lhm_msg.clone()))
+                        },
                         MUTED,
                     ))
                     .child(
@@ -845,7 +851,7 @@ impl Dashboard {
                         }))),
                     )
                     .child(h3("Janela"))
-                    .child(toggle("t-tray", "Fechar minimiza para a bandeja", s.close_to_tray, |s| s.close_to_tray = !s.close_to_tray))
+                    .when(crate::HAS_TRAY, |d| d.child(toggle("t-tray", "Fechar minimiza para a bandeja", s.close_to_tray, |s| s.close_to_tray = !s.close_to_tray)))
                     .child(
                         div()
                             .flex()

@@ -1,0 +1,23 @@
+Mark II v@VERSION@ - Linux x64 (versao nativa GPUI)
+
+1. Extraia a pasta e rode:  ./markii
+   Para ter o atalho no menu: copie markii.desktop para ~/.local/share/applications/
+   e ajuste o caminho em Exec= e Icon= para esta pasta.
+
+2. Precisa de placa de video com Vulkan (driver Mesa ou NVIDIA) e X11 ou Wayland.
+   Ubuntu/Debian: sudo apt install libvulkan1 mesa-vulkan-drivers libxkbcommon-x11-0
+
+3. Sensores: no Linux o Mark II le os sensores direto do kernel (hwmon), sem
+   driver extra e sem administrador.
+   - Ventoinhas e placa-mae: se nao aparecerem, o modulo do chip da placa nao
+     esta carregado. Rode "sudo sensors-detect" (pacote lm-sensors) ou, por
+     exemplo, "sudo modprobe nct6775" / "sudo modprobe it87".
+   - Potencia da CPU (RAPL) e a marca/slot de cada pente de RAM (dmidecode) so
+     aparecem rodando como root:  sudo ./markii
+   - GPU NVIDIA: usa o driver proprietario (NVML). GPU AMD: amdgpu.
+
+Configuracoes: ~/.config/com.akaineko.markii/config.json
+No Linux nao ha icone na bandeja: fechar a janela encerra o app.
+
+Logos de marcas: Simple Icons (CC0, veja licencas/). As marcas pertencem aos
+seus donos e so identificam o hardware.

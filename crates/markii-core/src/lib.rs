@@ -7,7 +7,11 @@ pub mod cpufreq;
 pub mod hw;
 pub mod hwinfo;
 pub mod lhm;
+#[cfg(target_os = "linux")]
+pub mod linux;
 pub mod pcinfo;
+#[cfg(target_os = "linux")]
+mod pcinfo_linux;
 pub mod ram;
 
 pub use alerts::{Active, Config};
@@ -295,7 +299,7 @@ impl Collector {
 
         // Sensor sources, best first: LHM helper with admin, HWiNFO, LHM without admin.
         let sensors = lhm::global();
-        if !self.lhm_started && lhm::helper_path().is_some() {
+        if !self.lhm_started && (cfg!(target_os = "linux") || lhm::helper_path().is_some()) {
             self.lhm_started = true;
             sensors.start(cfg.interval_ms, cfg.sensors_admin && lhm::pawnio_installed());
         }

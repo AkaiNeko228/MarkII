@@ -92,6 +92,10 @@ pub fn global() -> &'static Sensors {
 
 /// True when the PawnIO driver is installed (needed for CPU/board sensors).
 pub fn pawnio_installed() -> bool {
+    // Linux reads the sensor chips through the kernel: no extra driver needed.
+    if cfg!(not(windows)) {
+        return true;
+    }
     let pf = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
     PathBuf::from(pf).join("PawnIO").join("PawnIOLib.dll").exists()
 }
@@ -186,9 +190,28 @@ impl Sensors {
         });
     }
 
-    #[cfg(not(windows))]
+    /// Linux: read hwmon/sysfs in-process on a timer (no helper, no admin).
+    #[cfg(target_os = "linux")]
+    fn run(&'static self, interval_ms: u64, _admin: bool, gen: u64) -> Result<(), Status> {
+        let mut r = crate::linux::Reader::new();
+        while self.current(gen) {
+            let sample = r.sample();
+            {
+                let mut st = self.st.lock().unwrap();
+                if st.gen != gen {
+                    break;
+                }
+                st.last = Some((Instant::now(), sample));
+                st.status = Status::Running;
+            }
+            std::thread::sleep(Duration::from_millis(interval_ms.clamp(250, 5000)));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn run(&'static self, _interval_ms: u64, _admin: bool, _gen: u64) -> Result<(), Status> {
-        Err(Status::Failed("só no Windows".into()))
+        Err(Status::Failed("sistema não suportado".into()))
     }
 
     #[cfg(windows)]

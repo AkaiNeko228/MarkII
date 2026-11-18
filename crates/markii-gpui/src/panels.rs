@@ -10,6 +10,33 @@ use markii_core::{lhm, ram, thread_map, CoreT, Telemetry};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// GPUI 0.2's SVG rasteriser hands the pixels over as BGRA, so red and blue
+/// come out swapped. Pre-swap every #RGB / #RRGGBB in the SVG to compensate.
+pub(crate) fn svg_for_gpui(svg: &str) -> Vec<u8> {
+    let b = svg.as_bytes();
+    let mut out = String::with_capacity(svg.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'#' {
+            let n = b[i + 1..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
+            if n == 6 || n == 3 {
+                let h = &svg[i + 1..i + 1 + n];
+                let full: String = if n == 3 { h.chars().flat_map(|c| [c, c]).collect() } else { h.to_string() };
+                out.push('#');
+                out.push_str(&full[4..6]);
+                out.push_str(&full[2..4]);
+                out.push_str(&full[0..2]);
+                i += 1 + n;
+                continue;
+            }
+        }
+        let ch = svg[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out.into_bytes()
+}
+
 /// SVG logos are parsed once and reused, so GPUI keeps its rasterised copy.
 fn logo_image(b: &Brand) -> Option<Arc<Image>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<Image>>>> = OnceLock::new();
@@ -20,7 +47,7 @@ fn logo_image(b: &Brand) -> Option<Arc<Image>> {
     let mut m = CACHE.get_or_init(Default::default).lock().ok()?;
     Some(
         m.entry(k)
-            .or_insert_with(|| Arc::new(Image::from_bytes(ImageFormat::Svg, svg.replacen(&format!("fill=\"{}\"", b.color), &format!("fill=\"{fill}\""), 1).into_bytes())))
+            .or_insert_with(|| Arc::new(Image::from_bytes(ImageFormat::Svg, svg_for_gpui(&svg.replacen(&format!("fill=\"{}\"", b.color), &format!("fill=\"{fill}\""), 1)))))
             .clone(),
     )
 }
@@ -726,7 +753,15 @@ impl Dashboard {
         );
         let p = p.children(rows);
         if fans.is_empty() {
-            p.child(small("Ative os sensores completos (PawnIO + administrador) para ler as ventoinhas da placa-mãe.", DIM).pt(px(6.)))
+            p.child(small(
+                if cfg!(windows) {
+                    "Ative os sensores completos (PawnIO + administrador) para ler as ventoinhas da placa-mãe."
+                } else {
+                    "O kernel não expôs o chip de sensores da placa (hwmon). Em muitas placas é preciso carregar o módulo, por exemplo: sudo modprobe nct6775 (ou rode sensors-detect)."
+                },
+                DIM,
+            )
+            .pt(px(6.)))
         } else {
             p.child(small("Ventoinhas ligadas em hub/controladora aparecem como uma só no conector.", DIM).pt(px(6.)))
         }

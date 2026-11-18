@@ -26,8 +26,15 @@ pub const PINK: u32 = 0xff5c8a;
 pub const YELLOW: u32 = 0xf2cc3d;
 pub const ORANGE: u32 = 0xff8a3d;
 
+#[cfg(windows)]
 pub const NUM_FONT: &str = "Bahnschrift";
+#[cfg(windows)]
 pub const UI_FONT: &str = "Segoe UI";
+// Linux: common families; GPUI falls back to whatever sans font is installed.
+#[cfg(not(windows))]
+pub const NUM_FONT: &str = "DejaVu Sans";
+#[cfg(not(windows))]
+pub const UI_FONT: &str = "Noto Sans";
 
 /// A theme: 8 greys (BG → TEXT) and 8 accents, in the order of the constants.
 pub struct Theme {

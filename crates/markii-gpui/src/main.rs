@@ -13,7 +13,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+#[cfg(windows)]
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+#[cfg(windows)]
 use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use view::Dashboard;
 
@@ -22,10 +24,19 @@ pub fn notify(title: &str, body: &str) {
 }
 
 /// Same file the Tauri build uses, so settings carry over.
+/// Windows: %APPDATA%, Linux: $XDG_CONFIG_HOME or ~/.config.
 fn config_path() -> PathBuf {
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    base.join("com.akaineko.markii").join("config.json")
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA").map(PathBuf::from);
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
+    base.unwrap_or_else(|| PathBuf::from(".")).join("com.akaineko.markii").join("config.json")
 }
+
+/// The tray needs GTK's own loop on Linux, which GPUI does not run: tray only on Windows.
+pub const HAS_TRAY: bool = cfg!(windows);
 
 static HWND: AtomicIsize = AtomicIsize::new(0);
 
@@ -49,6 +60,7 @@ mod win {
     }
 }
 
+#[cfg(windows)]
 fn tray_icon() -> Option<tray_icon::Icon> {
     let bytes = include_bytes!("../../../src-tauri/icons/32x32.png");
     let dec = png::Decoder::new(std::io::Cursor::new(&bytes[..]));
@@ -119,7 +131,7 @@ fn main() {
                 }
             }
             window.on_window_should_close(cx, move |_, cx| {
-                if cfg_close.lock().unwrap().close_to_tray {
+                if HAS_TRAY && cfg_close.lock().unwrap().close_to_tray {
                     #[cfg(windows)]
                     win::hide(HWND.load(Ordering::Relaxed));
                     false
@@ -133,25 +145,32 @@ fn main() {
         .expect("failed to open window");
 
         // Tray icon with Show / Quit.
+        #[cfg(windows)]
         let show_i = MenuItem::new("Mostrar Mark II", true, None);
-        let quit_i = MenuItem::new("Sair", true, None);
-        let menu = Menu::new();
-        let _ = menu.append(&show_i);
-        let _ = menu.append(&quit_i);
-        let mut tb = TrayIconBuilder::new().with_tooltip("Mark II").with_menu(Box::new(menu)).with_menu_on_left_click(false);
-        if let Some(i) = tray_icon() {
-            tb = tb.with_icon(i);
-        }
-        let tray = tb.build().ok();
+        #[cfg(windows)]
+        let (tray, show_i, quit_i) = {
+            let quit_i = MenuItem::new("Sair", true, None);
+            let menu = Menu::new();
+            let _ = menu.append(&show_i);
+            let _ = menu.append(&quit_i);
+            let mut tb = TrayIconBuilder::new().with_tooltip("Mark II").with_menu(Box::new(menu)).with_menu_on_left_click(false);
+            if let Some(i) = tray_icon() {
+                tb = tb.with_icon(i);
+            }
+            (tb.build().ok(), show_i, quit_i)
+        };
+        #[cfg(windows)]
         let (show_id, quit_id) = (show_i.id().clone(), quit_i.id().clone());
 
         let cfg = cfg.clone();
         let pc = pc.clone();
         cx.spawn(async move |cx| {
+            #[cfg(windows)]
             let _keep = (show_i, quit_i);
             let mut last_anim = Instant::now();
             loop {
                 cx.background_executor().timer(Duration::from_millis(80)).await;
+                #[cfg(windows)]
                 let hwnd = HWND.load(Ordering::Relaxed);
                 #[cfg(windows)]
                 let visible = win::visible(hwnd);
@@ -165,6 +184,7 @@ fn main() {
                             notify(&format!("Mark II · {}", a.title), &format!("{:.0} {} (limite {:.0} {})", a.value, a.unit, a.limit, a.unit));
                         }
                     }
+                    #[cfg(windows)]
                     if let Some(tr) = &tray {
                         let _ = tr.set_tooltip(Some(t.tooltip()));
                     }
@@ -179,12 +199,14 @@ fn main() {
                 }
 
                 // Tray clicks and menu.
+                #[cfg(windows)]
                 while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
                         #[cfg(windows)]
                         if visible { win::hide(hwnd) } else { win::show(hwnd) }
                     }
                 }
+                #[cfg(windows)]
                 while let Ok(ev) = MenuEvent::receiver().try_recv() {
                     if ev.id == show_id {
                         #[cfg(windows)]

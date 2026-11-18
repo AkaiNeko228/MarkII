@@ -75,6 +75,7 @@ pub struct PcInfo {
     pub error: Option<String>,
 }
 
+#[cfg(not(target_os = "linux"))]
 const SCRIPT: &str = r#"
 $ErrorActionPreference='SilentlyContinue'
 $cs=Get-CimInstance Win32_ComputerSystem; $bb=Get-CimInstance Win32_BaseBoard; $bi=Get-CimInstance Win32_BIOS
@@ -95,6 +96,12 @@ $cool=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'Kraken|NZ
 } | ConvertTo-Json -Depth 4 -Compress
 "#;
 
+#[cfg(target_os = "linux")]
+pub fn collect() -> PcInfo {
+    crate::pcinfo_linux::collect()
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn collect() -> PcInfo {
     let mut cmd = std::process::Command::new("powershell");
     cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", SCRIPT]);

@@ -1,0 +1,71 @@
+# Builds the native (GPUI) Mark II for Linux x64.
+# - push to the "linux" branch or manual run: build + artifact
+# - release published: build and attach the .tar.gz to that release
+name: linux
+
+on:
+  push:
+    branches: [linux]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  gpui:
+    # 22.04: older glibc, so the binary runs on more distros
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries (GPUI on X11/Wayland)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config clang libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype6-dev \
+            libvulkan-dev libasound2-dev libdbus-1-dev libssl-dev libzstd-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test core
+        run: cargo test -p markii-core --lib
+
+      - name: Build
+        run: cargo build --release -p markii-gpui
+
+      - name: Package
+        id: pkg
+        run: |
+          ver=$(grep -m1 '^version' crates/markii-gpui/Cargo.toml | cut -d'"' -f2)
+          dir=MarkII-v$ver-linux-x64
+          mkdir -p dist/$dir/licencas
+          cp target/release/markii dist/$dir/markii
+          strip dist/$dir/markii
+          cp src-tauri/icons/128x128.png dist/$dir/markii.png
+          cp crates/markii-core/assets/logos/LICENSE-CC0.md dist/$dir/licencas/Simple-Icons-CC0.txt
+          cp packaging/linux/markii.desktop dist/$dir/
+          cp packaging/linux/LEIA-ME.txt dist/$dir/
+          sed -i "s/@VERSION@/$ver/" dist/$dir/LEIA-ME.txt
+          tar -C dist -czf dist/$dir.tar.gz $dir
+          # the archive must contain the app and its notes
+          for f in markii LEIA-ME.txt markii.desktop markii.png licencas/Simple-Icons-CC0.txt; do
+            tar -tzf dist/$dir.tar.gz | grep -qx "$dir/$f" || { echo "missing $f"; exit 1; }
+          done
+          echo "file=dist/$dir.tar.gz" >> "$GITHUB_OUTPUT"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: markii-linux-x64
+          path: ${{ steps.pkg.outputs.file }}
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.pkg.outputs.file }}" --clobber

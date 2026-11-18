@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Mark II
+Comment=Monitor do PC: CPU, GPU, memória, placa-mãe e ventoinhas
+Exec=markii
+Icon=markii
+Terminal=false
+Categories=System;Monitor;
