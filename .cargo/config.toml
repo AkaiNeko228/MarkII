@@ -1,0 +1,4 @@
+[env]
+# GPUI compiles its HLSL shaders with fxc.exe in release builds.
+# The Windows SDK on this machine lives on D:, not the default C: path.
+GPUI_FXC_PATH = { value = 'D:\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe', force = false }

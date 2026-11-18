@@ -149,7 +149,7 @@ fn main() {
             let _keep = (show_i, quit_i);
             let mut last_anim = Instant::now();
             loop {
-                cx.background_executor().timer(Duration::from_millis(50)).await;
+                cx.background_executor().timer(Duration::from_millis(80)).await;
                 let hwnd = HWND.load(Ordering::Relaxed);
                 #[cfg(windows)]
                 let visible = win::visible(hwnd);
@@ -192,7 +192,7 @@ fn main() {
                     }
                 }
 
-                // Sprite animation (~20 fps) only while the window is on screen.
+                // Sprite animation (~12 fps) only while the window is on screen.
                 let dt = last_anim.elapsed().as_secs_f32();
                 last_anim = Instant::now();
                 if visible {

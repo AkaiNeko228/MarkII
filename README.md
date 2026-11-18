@@ -26,6 +26,8 @@ cargo run -p markii-gpui            # app GPUI (principal)
 cargo build -p markii-gpui --release
 ```
 
+No build *release* o GPUI compila shaders com o `fxc.exe` do Windows SDK. O caminho está em `.cargo/config.toml` (`GPUI_FXC_PATH`); ajuste se o seu SDK estiver em outro lugar.
+
 A versão antiga com interface web (Tauri) continua no repositório:
 
 ```bash
