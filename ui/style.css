@@ -100,7 +100,8 @@ main { display: flex; flex-direction: column; gap: 12px; }
 .coolstats b { display: block; font: 600 18px var(--num); }
 .coolstats span { font-size: 11px; color: var(--muted); }
 .cooltip { margin-top: 10px; font-size: 12px; color: var(--muted); border-left: 2px solid var(--a); padding-left: 8px; }
-.spin { transform-box: fill-box; transform-origin: center; animation: spin var(--spd, 0s) linear infinite; }
+/* view-box: transform-origin is given in SVG user units per element (inline style) */
+.spin { transform-box: view-box; animation: spin var(--spd, 0s) linear infinite; }
 .flow { stroke-dasharray: 6 6; animation: flow var(--fspd, 0s) linear infinite; }
 @keyframes flow { to { stroke-dashoffset: -24; } }
 

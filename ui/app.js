@@ -169,7 +169,7 @@ function coolArt(kind) {
     <path class="flow" d="M80 60 C80 90 90 100 100 112" fill="none" stroke="#44c7e0" stroke-width="5" stroke-linecap="round"/>
     <path class="flow" d="M130 60 C130 90 120 100 112 112" fill="none" stroke="#ff8a3d" stroke-width="5" stroke-linecap="round"/>
     <rect x="80" y="106" width="52" height="38" rx="8" fill="#1b2129" stroke="#5a6472"/>
-    <circle cx="106" cy="125" r="11" fill="none" stroke="#44c7e0" stroke-width="2" class="spin pump"/><circle cx="106" cy="125" r="4" fill="#44c7e0"/>
+    <circle cx="106" cy="125" r="11" fill="none" stroke="#44c7e0" stroke-width="2" stroke-dasharray="10 4" class="spin pump" style="transform-origin:106px 125px"/><circle cx="106" cy="125" r="4" fill="#44c7e0"/>
   </svg>`;
   if (kind === "air") return `<svg viewBox="0 0 210 150">
     <rect x="40" y="128" width="130" height="14" rx="2" fill="#1a2e22" stroke="#3a4452"/>

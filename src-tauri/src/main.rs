@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod alerts;
+mod cpufreq;
 mod hw;
 mod hwinfo;
 mod pcinfo;
@@ -188,6 +189,7 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>) {
     let mut last = Instant::now();
     let mut tick: u64 = 0;
     let mut engine = alerts::Engine::default();
+    let mut freq = cpufreq::CpuFreq::new(cpu_count as usize);
 
     loop {
         let cfg = shared.cfg();
@@ -213,11 +215,20 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>) {
             hwsnap.as_ref()?.cpu.cores.iter().find(|c| c.idx as usize == i)?.temp
         };
 
+        let core_clock = |i: usize| -> Option<u64> {
+            hwsnap.as_ref()?.cpu.cores.iter().find(|c| c.idx as usize == i)?.clock.map(|v| v.round() as u64)
+        };
+        let real = freq.as_mut().map(|f| f.sample()).unwrap_or_default();
         let cpus = sys.cpus();
         let cores: Vec<CoreT> = cpus
             .iter()
             .enumerate()
-            .map(|(i, c)| CoreT { idx: i, load: c.cpu_usage(), mhz: c.frequency(), temp: core_temp(i) })
+            .map(|(i, c)| CoreT {
+                idx: i,
+                load: c.cpu_usage(),
+                mhz: core_clock(i).or(real.get(i).copied().flatten()).unwrap_or(c.frequency()),
+                temp: core_temp(i),
+            })
             .collect();
         let mhz_avg = if cores.is_empty() { 0 } else { cores.iter().map(|c| c.mhz).sum::<u64>() / cores.len() as u64 };
         let hc = hwsnap.as_ref().map(|h| &h.cpu);
