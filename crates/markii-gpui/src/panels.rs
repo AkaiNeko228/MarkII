@@ -1,0 +1,652 @@
+//! Hardware panels: CPU (cores/threads), compact GPU, memory, motherboard, fans,
+//! and the sensor-status banner. Everything is drawn from what this PC reports;
+//! nothing is specific to one model of CPU, GPU or board.
+use crate::draw;
+use crate::theme::*;
+use crate::view::{gb, label, num, panel, panel_el, row, segbar, small, Dashboard};
+use gpui::{div, prelude::*, px, AnyElement, Context, Div, FontWeight, SharedString};
+use markii_core::{lhm, ram, CoreT, Telemetry};
+
+fn opt(v: Option<f64>, fmt: impl Fn(f64) -> String) -> String {
+    v.filter(|v| v.is_finite()).map_or("—".into(), fmt)
+}
+
+/// A small metric cell: label, value, optional note under it.
+fn cell(k: &str, v: String, col: Option<u32>, note: Option<String>) -> Div {
+    let missing = v == "—";
+    div()
+        .flex_1()
+        .min_w(px(0.))
+        .bg(c(PANEL2))
+        .border_1()
+        .border_color(c(LINE))
+        .rounded(px(4.))
+        .px(px(8.))
+        .py(px(6.))
+        .child(label(k))
+        .child(num(v, 16.).text_color(c(if missing { DIM } else { col.unwrap_or(TEXT) })))
+        .when_some(note, |d, n| d.child(div().text_size(px(10.5)).text_color(c(if missing { DIM } else { MUTED })).child(n)))
+}
+
+/// Lays cells out in rows of `n`.
+fn grid(cells: Vec<Div>, n: usize) -> Div {
+    let mut rows = Vec::new();
+    let mut it = cells.into_iter().peekable();
+    while it.peek().is_some() {
+        let mut r: Vec<Div> = it.by_ref().take(n).collect();
+        while r.len() < n {
+            r.push(div().flex_1());
+        }
+        rows.push(div().flex().gap(px(6.)).children(r));
+    }
+    div().flex().flex_col().gap(px(6.)).children(rows)
+}
+
+fn seg<T: 'static>(cx: &mut Context<Dashboard>, id: &str, opts: &[(&'static str, &'static str)], cur: &str, f: fn(&mut Dashboard, &'static str)) -> Div
+where
+    Dashboard: 'static,
+{
+    let _ = std::marker::PhantomData::<T>;
+    div().flex().border_1().border_color(c(LINE2)).rounded(px(5.)).overflow_hidden().children(opts.iter().map(|(v, l)| {
+        let on = cur == *v;
+        let v = *v;
+        div()
+            .id(SharedString::from(format!("{id}-{v}")))
+            .px(px(9.))
+            .py(px(3.))
+            .text_size(px(11.))
+            .font_family(NUM_FONT)
+            .font_weight(FontWeight::SEMIBOLD)
+            .cursor_pointer()
+            .when(on, |d| d.bg(c(INDIGO)).text_color(c(0x0d0f1a)))
+            .when(!on, |d| d.text_color(c(MUTED)).hover(|s| s.bg(c(PANEL2)).text_color(c(TEXT))))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                f(this, v);
+                cx.notify();
+            }))
+            .child(*l)
+    }))
+}
+
+fn needs_sensors(t: &Telemetry) -> Option<String> {
+    (t.source.is_empty() || t.lhm_state == "limited").then(|| "precisa dos sensores completos".to_string())
+}
+
+impl Dashboard {
+    // ---------------------------------------------------------------- sensors banner
+    pub(crate) fn sensors_bar(&self, t: &Telemetry, cx: &mut Context<Self>) -> Option<Div> {
+        let interval = self.cfg.lock().unwrap().interval_ms;
+        let (msg, action): (String, Option<(&'static str, bool)>) = match t.lhm_state.as_str() {
+            "running" | "off" if t.pawnio => return None,
+            "starting" | "installing" => (t.lhm_msg.clone(), None),
+            _ if !t.pawnio => (
+                "Sensores limitados: falta o driver PawnIO para ler CPU (potência, Vcore), ventoinhas e placa-mãe.".into(),
+                Some(("Instalar PawnIO", true)),
+            ),
+            "limited" => (
+                "Rodando sem administrador: GPU e discos funcionam, mas CPU, ventoinhas e placa-mãe precisam da permissão (UAC).".into(),
+                Some(("Tentar com administrador", false)),
+            ),
+            _ => (format!("Sensores: {}", t.lhm_msg), Some(("Tentar de novo", false))),
+        };
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .px(px(12.))
+                .py(px(8.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(ca(ORANGE, 0.45))
+                .bg(ca(ORANGE, 0.08))
+                .text_size(px(12.5))
+                .child(div().text_color(c(ORANGE)).child("⚠"))
+                .child(div().flex_1().min_w_0().child(msg))
+                .when_some(action, |d, (txt, install)| {
+                    d.child(
+                        div()
+                            .id("sensors-action")
+                            .px(px(12.))
+                            .py(px(5.))
+                            .rounded(px(4.))
+                            .bg(c(ORANGE))
+                            .text_color(c(0x1a1205))
+                            .font_family(NUM_FONT)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(12.))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                if install {
+                                    lhm::global().install_then_start(interval);
+                                } else {
+                                    lhm::global().start(interval, true);
+                                }
+                                cx.notify();
+                            }))
+                            .child(txt),
+                    )
+                }),
+        )
+    }
+
+    // ---------------------------------------------------------------- CPU
+    pub(crate) fn cpu_panel(&self, t: &Telemetry, cx: &mut Context<Self>) -> Div {
+        let cpu = &t.cpu;
+        let view = self.cfg.lock().unwrap().cpu_view.clone();
+        let phys_ok = !cpu.phys.is_empty();
+        let threads_view = view == "threads" || !phys_ok;
+        let hybrid = cpu.phys.iter().any(|c| c.kind == "E");
+        let list: &Vec<CoreT> = if threads_view { &cpu.cores } else { &cpu.phys };
+        let tile = |c0: &CoreT| {
+            let col = if c0.temp.is_some() && !threads_view { temp_col(c0.temp) } else { load_col(Some(c0.load as f64)) };
+            let big = match (threads_view, c0.temp) {
+                (false, Some(v)) => format!("{v:.0}°"),
+                _ => format!("{:.0}%", c0.load),
+            };
+            let tag = if threads_view { format!("T{}", c0.idx) } else if hybrid { format!("{}{}", c0.kind, c0.idx) } else { format!("C{}", c0.idx) };
+            let sub = match c0.volt {
+                Some(v) if !threads_view => format!("{:.2} GHz · {v:.2} V", c0.mhz as f64 / 1000.0),
+                _ => format!("{:.2} GHz", c0.mhz as f64 / 1000.0),
+            };
+            div()
+                .flex_1()
+                .min_w_0()
+                .rounded(px(3.))
+                .border_1()
+                .border_color(ca(col, 0.45))
+                .bg(mix(col, 0x161b22, 0.14))
+                .px(px(6.))
+                .pt(px(3.))
+                .pb(px(5.))
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .font_family(NUM_FONT)
+                        .text_size(px(9.5))
+                        .text_color(c(MUTED))
+                        .child(tag)
+                        .child(format!("{:.0}%", c0.load)),
+                )
+                .child(num(big, 18.).text_color(c(col)))
+                .child(div().font_family(NUM_FONT).text_size(px(9.5)).text_color(c(MUTED)).child(sub))
+                .child(segbar(c0.load as f64, 10, col, 3.))
+        };
+        let per_row = match list.len() {
+            0..=8 => 2,
+            9..=16 => 4,
+            17..=24 => 4,
+            _ => 6,
+        };
+        let mut rows = Vec::new();
+        for chunk in list.chunks(per_row) {
+            let mut r: Vec<Div> = chunk.iter().map(&tile).collect();
+            while r.len() < per_row {
+                r.push(div().flex_1());
+            }
+            rows.push(div().flex().gap(px(5.)).children(r));
+        }
+        let die = div()
+            .flex_1()
+            .min_w_0()
+            .border_1()
+            .border_color(c(0x3a4452))
+            .rounded(px(4.))
+            .bg(c(0x152a1e))
+            .p(px(6.))
+            .child(div().h(px(4.)).mx(px(2.)).mb(px(6.)).bg(ca(0xc9a227, 0.5)))
+            .child(
+                div()
+                    .border_1()
+                    .border_color(c(0x5a6472))
+                    .rounded(px(3.))
+                    .bg(c(0x1f252d))
+                    .p(px(7.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(5.))
+                    .child(div().flex().justify_center().child(label(&format!(
+                        "{} núcleos · {} threads",
+                        if phys_ok { cpu.phys.len() } else { (cpu.cores.len()).max(1) },
+                        cpu.threads
+                    ))))
+                    .children(rows),
+            )
+            .child(div().h(px(4.)).mx(px(2.)).mt(px(6.)).bg(ca(0xc9a227, 0.5)));
+        let need = needs_sensors(t);
+        let stat = |l: &str, v: String, col: Option<u32>, sub: Option<String>| {
+            let missing = v == "—";
+            div()
+                .child(label(l))
+                .child(num(v, 17.).text_color(c(if missing { DIM } else { col.unwrap_or(TEXT) })))
+                .when_some(sub, |d, s| d.child(div().text_size(px(10.)).text_color(c(MUTED)).child(s)))
+        };
+        let ghz = |m: u64| if m == 0 { "—".to_string() } else { format!("{:.2}", m as f64 / 1000.0) };
+        let side = div()
+            .w(px(128.))
+            .flex()
+            .flex_col()
+            .gap(px(7.))
+            .child(stat("Carga", format!("{:.0} %", cpu.load), Some(load_col(Some(cpu.load as f64))), None))
+            .child(stat("Pacote", opt(cpu.package_temp, |v| format!("{v:.0} °C")), Some(temp_col(cpu.package_temp)), if cpu.package_temp.is_none() { need.clone() } else { None }))
+            .child(stat("Core max", opt(cpu.core_max, |v| format!("{v:.0} °C")), Some(temp_col(cpu.core_max)), None))
+            .child(stat(
+                "Potência",
+                opt(cpu.power, |v| format!("{v:.1} W")),
+                None,
+                cpu.cores_power.map(|v| format!("núcleos {v:.1} W")).or(if cpu.power.is_none() { need.clone() } else { None }),
+            ))
+            .child(stat("Vcore", opt(cpu.vcore, |v| format!("{v:.3} V")), Some(YELLOW), cpu.vid.filter(|_| cpu.vcore.is_some()).map(|v| format!("VID pedido {v:.3} V"))))
+            .child(stat(
+                "Clock agora",
+                format!("{}–{} GHz", ghz(cpu.mhz_min), ghz(cpu.mhz_max)),
+                None,
+                Some(format!("sessão {}–{} GHz", ghz(cpu.session_min), ghz(cpu.session_max))),
+            ))
+            .when_some(cpu.bus_mhz, |d, b| d.child(stat("Barramento", format!("{b:.1} MHz"), None, None)));
+        let toggle = seg::<()>(cx, "cpuview", &[("cores", "Núcleos"), ("threads", "Threads")], if threads_view { "threads" } else { "cores" }, |this, v| {
+            let mut c0 = this.cfg.lock().unwrap();
+            c0.cpu_view = v.into();
+            let _ = c0.save(&this.cfg_path);
+        });
+        panel_el(INDIGO, crate::view::clean_cpu(&cpu.name).to_uppercase(), toggle.into_any_element(), t.alerts.iter().any(|a| a.key == "cpu_temp"))
+            .child(div().flex().gap(px(12.)).child(die).child(side))
+            .when(!phys_ok && view == "cores", |d| d.child(small("Os núcleos físicos aparecem quando os sensores completos estão ativos; mostrando threads.", DIM).mt(px(6.))))
+    }
+
+    // ---------------------------------------------------------------- GPU (compact)
+    pub(crate) fn gpu_panel(&self, t: &Telemetry) -> Div {
+        let g = &t.gpu;
+        let short = g.name.replace("NVIDIA ", "").replace("AMD ", "");
+        let used = match (g.vram_used, g.vram_total) {
+            (Some(u), Some(tt)) if tt > 0 => u as f64 / tt as f64,
+            _ => 0.0,
+        };
+        // One memory chip per 32 bits of bus (GDDR5/6/6X/7 are x32 devices).
+        let chips = g.bus_width.map(|b| (b / 32).clamp(1, 16) as usize).unwrap_or(4);
+        let chip = |i: usize| {
+            let fill_ = (used * chips as f64 - i as f64).clamp(0.0, 1.0);
+            let col = if fill_ > 0.0 { load_col(g.mem_load.map(|v| v as f64)) } else { DIM };
+            div().w(px(16.)).h(px(12.)).rounded(px(1.)).border_1().border_color(ca(col, 0.6)).bg(ca(col, 0.12 + fill_ as f32 * 0.35))
+        };
+        let half = chips.div_ceil(2);
+        let die_col = temp_col(g.temp.map(|v| v as f64));
+        let card = div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .border_1()
+            .border_color(c(0x3a4452))
+            .rounded(px(4.))
+            .bg(c(0x0e1318))
+            .px(px(12.))
+            .py(px(10.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(5.))
+                    .child(div().flex().gap(px(4.)).children((0..half).map(chip)))
+                    .child(
+                        div()
+                            .w(px(84.))
+                            .h(px(58.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(ca(die_col, 0.6))
+                            .bg(c(0x1b2028))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .child(num(g.temp.map_or("—".into(), |v| format!("{v}°")), 22.).text_color(c(die_col)))
+                            .child(div().font_family(NUM_FONT).text_size(px(9.5)).text_color(c(MUTED)).child(g.clock.map_or("—".into(), |v| format!("{:.2} GHz", v as f64 / 1000.0)))),
+                    )
+                    .child(div().flex().gap(px(4.)).children((half..chips).map(chip))),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(label("Uso"))
+                    .child(num(format!("{} %", g.load.map_or("—".into(), |v| v.to_string())), 26.).text_color(c(load_col(g.load.map(|v| v as f64)))))
+                    .child(segbar(g.load.unwrap_or(0) as f64, 20, GREEN, 5.))
+                    .child(small(
+                        format!("VRAM {} / {} GB · {} chips{}", g.vram_used.map_or("—".into(), gb), g.vram_total.map_or("—".into(), gb), chips, g.bus_width.map_or(String::new(), |b| format!(" · {b}-bit"))),
+                        MUTED,
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(draw::fan(self.gpu_fan_angle, 54.))
+                    .child(div().font_family(NUM_FONT).text_size(px(10.5)).text_color(c(MUTED)).child(match (g.fan, g.fan_rpm) {
+                        (Some(p), Some(r)) => format!("{p}% · {r:.0} rpm"),
+                        (Some(p), None) => format!("{p}%"),
+                        (None, Some(r)) => format!("{r:.0} rpm"),
+                        _ => "fan —".into(),
+                    })),
+            );
+        let no = Some("sem sensor nesta placa".to_string());
+        let t1 = |v: Option<f64>| opt(v, |v| format!("{v:.0} °C"));
+        let cells = vec![
+            cell("Temperatura", t1(g.temp.map(|v| v as f64)), Some(temp_col(g.temp.map(|v| v as f64))), None),
+            cell("Hotspot", t1(g.hotspot), Some(temp_col(g.hotspot)), if g.hotspot.is_none() { needs_sensors(t).or(no.clone()) } else { None }),
+            cell("Memória", t1(g.mem_temp), Some(temp_col(g.mem_temp)), if g.mem_temp.is_none() { no.clone() } else { None }),
+            cell("VRM", t1(g.vrm_temp), Some(temp_col(g.vrm_temp)), if g.vrm_temp.is_none() { no.clone() } else { None }),
+            cell("Consumo", opt(g.power_w, |v| format!("{v:.0} W")), None, g.power_limit_w.map(|l| format!("limite {l:.0} W"))),
+            cell("Tensão", opt(g.voltage, |v| format!("{v:.3} V")), Some(YELLOW), if g.voltage.is_none() { needs_sensors(t) } else { None }),
+            cell("Clock memória", g.mem_clock.map_or("—".into(), |v| format!("{v} MHz")), None, g.mem_load.map(|v| format!("controlador {v}%"))),
+            cell("VRAM", g.vram_used.map_or("—".into(), |u| format!("{} GB", gb(u))), None, Some(format!("{:.0}% de {} GB", used * 100.0, g.vram_total.map_or("—".into(), gb)))),
+        ];
+        let cap = g.error.clone();
+        panel(GREEN, short.to_uppercase(), g.vram_total.map_or(String::new(), |v| format!("{} GB", gb(v))), t.alerts.iter().any(|a| a.key == "gpu_temp"))
+            .child(card)
+            .child(div().mt(px(8.)).child(grid(cells, 4)))
+            .when_some(cap, |d, e| d.child(small(e, DIM).mt(px(6.))))
+    }
+
+    // ---------------------------------------------------------------- memory
+    pub(crate) fn ram_panel(&self, t: &Telemetry) -> Div {
+        let pct_ = t.mem_pct().unwrap_or(0.0);
+        let pc = self.pc.as_ref();
+        let mods = pc.map(|p| p.ram.clone()).unwrap_or_default();
+        let m0 = mods.first();
+        let mts = m0.map(|m| if m.configured > 0 { m.configured } else { m.speed }).unwrap_or(0);
+        let kind = m0.map(|m| m.type_name()).unwrap_or("RAM");
+        let spd = t.hw.spd.first();
+        let cyc = |v: Option<f64>| v.and_then(|v| ram::cycles(v, mts));
+        let cl = cyc(spd.and_then(|s| s.taa));
+        let timings = match (cl, cyc(spd.and_then(|s| s.trcd)), cyc(spd.and_then(|s| s.trp)), cyc(spd.and_then(|s| s.tras))) {
+            (Some(a), Some(b), Some(c0), Some(d)) => Some(format!("{a}-{b}-{c0}-{d}")),
+            _ => None,
+        };
+        let volt = m0.filter(|m| m.mv > 0).map(|m| m.mv as f64 / 1000.0).or(t.hw.board.dram_v);
+        let temp = t.hw.spd.iter().filter_map(|s| s.temp).reduce(f64::max);
+        let slots_n = pc.map(|p| p.ram_slots).unwrap_or(0);
+        let mode = pc.map(ram::channel_mode).unwrap_or("—");
+        let cells = vec![
+            cell("Frequência", if mts > 0 { format!("{mts} MT/s") } else { "—".into() }, None, (mts > 0).then(|| format!("{} MHz reais · {kind}", mts / 2))),
+            cell(
+                "Latência",
+                cl.map_or("—".into(), |v| format!("CL{v}")),
+                Some(CYAN),
+                timings.map(|tm| format!("{tm} · {:.2} ns", cl.and_then(|c0| ram::cas_ns(c0, mts)).unwrap_or(0.0))).or(needs_sensors(t)),
+            ),
+            cell("Tensão", opt(volt, |v| format!("{v:.2} V")), Some(YELLOW), None),
+            cell("Temperatura", opt(temp, |v| format!("{v:.0} °C")), Some(temp_col(temp)), if temp.is_none() { Some("o pente não tem sensor".into()) } else { None }),
+            cell("Consumo", opt(t.cpu.mem_power, |v| format!("{v:.1} W")), None, t.cpu.mem_power.map(|_| "controlador de memória".into())),
+            cell("Canais", mode.replace(" channel", "").to_string(), None, Some(format!("{} de {} slots", mods.len(), slots_n.max(mods.len() as u32)))),
+        ];
+        let module_rows = mods.iter().enumerate().map(|(i, m)| {
+            let s = t.hw.spd.get(i);
+            let extra = s
+                .and_then(|s| s.trfc.and_then(|v| ram::cycles(v, mts)).map(|rfc| format!(" · tRFC {rfc}")))
+                .unwrap_or_default();
+            row(
+                format!("{} · {:.0} GB {}", m.slot, m.size_gb, m.part),
+                format!("{} MT/s{}{extra}", if m.configured > 0 { m.configured } else { m.speed }, if m.speed > m.configured && m.configured > 0 { format!(" (suporta {})", m.speed) } else { String::new() }),
+            )
+        });
+        panel(AMBER, "MEMÓRIA RAM", format!("{} · {} GB", kind, gb(t.mem.total)), t.alerts.iter().any(|a| a.key == "ram"))
+            .child(
+                div()
+                    .flex()
+                    .items_end()
+                    .gap(px(10.))
+                    .child(num(format!("{pct_:.0}%"), 30.).text_color(c(load_col(Some(pct_)))))
+                    .child(div().pb(px(5.)).text_color(c(MUTED)).text_size(px(12.5)).child(format!(
+                        "{} de {} GB em uso · virtual {} / {} GB",
+                        gb(t.mem.used),
+                        gb(t.mem.total),
+                        gb(t.mem.swap_used),
+                        gb(t.mem.swap_total)
+                    ))),
+            )
+            .child(segbar(pct_, 30, AMBER, 6.))
+            .child(div().mt(px(10.)).child(grid(cells, 3)))
+            .child(div().mt(px(6.)).children(module_rows))
+    }
+
+    // ---------------------------------------------------------------- motherboard
+    pub(crate) fn board_panel(&self, t: &Telemetry) -> Div {
+        let b = &t.hw.board;
+        let Some(pc) = self.pc.as_ref() else {
+            return panel(ORANGE, "PLACA-MÃE", "identificando…", false).child(small("lendo informações da placa…", DIM));
+        };
+        let slots = ram::slots(pc);
+        let fans = &t.hw.fans;
+        let in_use = fans.iter().filter(|f| f.rpm > 0.0).count();
+
+        // --- sprite: slots + fan headers + RGB ---
+        let slot_el = |s: &ram::Slot| {
+            let on = s.module.is_some();
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(3.))
+                .child(
+                    div()
+                        .w(px(16.))
+                        .h(px(92.))
+                        .rounded(px(2.))
+                        .border_1()
+                        .border_color(c(if on { AMBER } else { 0x3a4452 }))
+                        .bg(if on { ca(AMBER, 0.25) } else { c(0x161b22) })
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(div().w(px(4.)).h(px(70.)).rounded(px(1.)).bg(if on { c(AMBER) } else { c(0x222a35) })),
+                )
+                .child(div().font_family(NUM_FONT).text_size(px(9.5)).text_color(c(if on { TEXT } else { DIM })).child(s.name.clone()))
+                .child(div().font_family(NUM_FONT).text_size(px(9.)).text_color(c(MUTED)).child(s.module.as_ref().map_or("vazio".into(), |m| format!("{:.0} GB", m.size_gb))))
+        };
+        let header_el = |i: usize, f: &markii_core::hw::Fan| {
+            let on = f.rpm > 0.0;
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(2.))
+                        .p(px(3.))
+                        .rounded(px(2.))
+                        .border_1()
+                        .border_color(c(if on { CYAN } else { 0x3a4452 }))
+                        .bg(if on { ca(CYAN, 0.15) } else { c(0x161b22) })
+                        .children((0..4).map(move |_| div().size(px(4.)).rounded(px(1.)).bg(c(if on { CYAN } else { 0x4a5462 })))),
+                )
+                .child(div().font_family(NUM_FONT).text_size(px(9.)).text_color(c(if on { TEXT } else { DIM })).child(if f.label.starts_with("Fan #") { format!("F{}", i + 1) } else { f.label.clone() }))
+                .child(div().font_family(NUM_FONT).text_size(px(9.)).text_color(c(MUTED)).child(if on { format!("{:.0}", f.rpm) } else { "—".into() }))
+        };
+        let sprite = div()
+            .flex()
+            .gap(px(14.))
+            .border_1()
+            .border_color(c(0x2f3a2c))
+            .rounded(px(4.))
+            .bg(c(0x101712))
+            .p(px(10.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(label("Slots de RAM"))
+                    .child(div().flex().gap(px(6.)).children(slots.iter().map(slot_el))),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(label(&format!("Conectores de fan · {in_use} de {} em uso", b.headers)))
+                            .child(if fans.is_empty() {
+                                small("sem leitura do chip da placa", DIM).into_any_element()
+                            } else {
+                                div().flex().flex_wrap().gap(px(8.)).children(fans.iter().enumerate().map(|(i, f)| header_el(i, f))).into_any_element()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(label("RGB"))
+                            .child(if pc.rgb_devices.is_empty() {
+                                small("nenhum controlador RGB por USB encontrado", MUTED)
+                            } else {
+                                div().flex().flex_wrap().gap(px(4.)).children(pc.rgb_devices.iter().map(|d| {
+                                    div().px(px(6.)).py(px(1.)).rounded(px(4.)).border_1().border_color(ca(PINK, 0.5)).text_size(px(11.)).text_color(c(PINK)).child(d.clone())
+                                }))
+                            })
+                            .child(small("Conectores RGB/ARGB da placa (5 V/12 V) são passivos: nenhum software consegue ver se estão em uso.", DIM)),
+                    ),
+            );
+
+        let t1 = |v: Option<f64>| opt(v, |v| format!("{v:.0} °C"));
+        let no = || Some("a placa não tem esse sensor".to_string());
+        let measured = t.cpu.power.unwrap_or(0.0) + t.gpu.power_w.unwrap_or(0.0);
+        let cells = vec![
+            cell("VRM da CPU", t1(b.vrm), Some(temp_col(b.vrm)), if b.vrm.is_none() { needs_sensors(t).or(no()) } else { None }),
+            cell("VRM da memória", t1(b.vrm_mem), Some(temp_col(b.vrm_mem)), if b.vrm_mem.is_none() { needs_sensors(t).or(no()) } else { None }),
+            cell("Chipset", t1(b.pch), Some(temp_col(b.pch)), if b.pch.is_none() { no() } else { None }),
+            cell(
+                "Consumo da placa",
+                opt(b.power, |v| format!("{v:.0} W")),
+                None,
+                Some(if b.power.is_some() { "sensor da placa".into() } else if measured > 0.0 { format!("sem sensor · CPU+GPU medidos {measured:.0} W") } else { "sem sensor".into() }),
+            ),
+        ];
+        let named_t: Vec<_> = b.temps.iter().filter(|x| !x.label.starts_with("Temperature #")).collect();
+        let named_v: Vec<_> = b.volts.iter().filter(|x| !x.label.starts_with("Voltage #")).collect();
+        let unnamed = b.temps.len() - named_t.len() + b.volts.len() - named_v.len();
+        let chipsub = if b.chip.is_empty() { "chip de sensores não lido".to_string() } else { b.chip.clone() };
+        panel(ORANGE, format!("PLACA-MÃE · {} {}", pc.board_maker, pc.board).to_uppercase(), chipsub, false)
+            .child(sprite)
+            .child(div().mt(px(8.)).child(grid(cells, 4)))
+            .when(!named_t.is_empty() || !named_v.is_empty(), |d| {
+                d.child(
+                    div()
+                        .mt(px(8.))
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(6.))
+                        .children(named_t.iter().map(|x| chip_kv(&x.label, format!("{:.0} °C", x.value))))
+                        .children(named_v.iter().map(|x| chip_kv(&x.label, format!("{:.3} V", x.value)))),
+                )
+            })
+            .when(unnamed > 0, |d| d.child(small(format!("+{unnamed} leituras sem nome no chip (esta placa não identifica os canais)"), DIM).mt(px(4.))))
+    }
+
+    // ---------------------------------------------------------------- fans
+    pub(crate) fn fans_panel(&self, t: &Telemetry) -> Div {
+        let fans = &t.hw.fans;
+        let in_use = fans.iter().filter(|f| f.rpm > 0.0).count();
+        let gpu_fan = t.gpu.fan.is_some() || t.gpu.fan_rpm.is_some();
+        let total = in_use + usize::from(gpu_fan);
+        let mut rows: Vec<Div> = Vec::new();
+        for f in fans {
+            let on = f.rpm > 0.0;
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .py(px(6.))
+                    .border_b_1()
+                    .border_color(c(LINE))
+                    .text_size(px(12.5))
+                    .child(div().size(px(7.)).rounded(px(4.)).bg(c(if on { CYAN } else { 0x3a4452 })))
+                    .child(div().flex_1().min_w_0().text_color(c(if on { TEXT } else { DIM })).child(f.label.clone()))
+                    .child(div().w(px(90.)).child(segbar(f.pct.unwrap_or(0.0), 10, if on { CYAN } else { DIM }, 4.)))
+                    .child(div().w(px(110.)).flex().justify_end().font_family(NUM_FONT).text_color(c(MUTED)).child(if on {
+                        format!("{:.0} rpm · {}", f.rpm, f.pct.map_or("—".into(), |p| format!("{p:.0}%")))
+                    } else {
+                        "desconectado".into()
+                    })),
+            );
+        }
+        if gpu_fan {
+            rows.push(row(
+                "GPU",
+                match (t.gpu.fan, t.gpu.fan_rpm) {
+                    (Some(p), Some(r)) => format!("{r:.0} rpm · {p}%"),
+                    (Some(p), None) => format!("{p}%"),
+                    (None, Some(r)) => format!("{r:.0} rpm"),
+                    _ => "—".into(),
+                },
+            ));
+        }
+        let tag = if fans.is_empty() { "sem leitura".to_string() } else { format!("{total} girando · {} conectores", fans.len()) };
+        let p = panel(CYAN, "VENTOINHAS", tag, false).child(
+            div()
+                .flex()
+                .items_end()
+                .gap(px(6.))
+                .mb(px(6.))
+                .child(num(total.to_string(), 30.).text_color(c(CYAN)))
+                .child(div().pb(px(5.)).text_color(c(MUTED)).text_size(px(12.5)).child(if total == 1 { "ventoinha detectada" } else { "ventoinhas detectadas" })),
+        );
+        let p = p.children(rows);
+        if fans.is_empty() {
+            p.child(small("Ative os sensores completos (PawnIO + administrador) para ler as ventoinhas da placa-mãe.", DIM).pt(px(6.)))
+        } else {
+            p.child(small("Ventoinhas ligadas em hub/controladora aparecem como uma só no conector.", DIM).pt(px(6.)))
+        }
+    }
+
+    // ---------------------------------------------------------------- drive health
+    pub(crate) fn drives_rows(&self, t: &Telemetry) -> Vec<AnyElement> {
+        t.hw
+            .drives
+            .iter()
+            .map(|d| {
+                let mut v = Vec::new();
+                if let Some(x) = d.temp {
+                    v.push(format!("{x:.0} °C"));
+                }
+                if let Some(x) = d.life {
+                    v.push(format!("vida {x:.0}%"));
+                }
+                if let Some(x) = d.hours {
+                    v.push(format!("{:.0} h ligado", x));
+                }
+                row(d.name.clone(), v.join(" · ")).into_any_element()
+            })
+            .collect()
+    }
+}
+
+fn chip_kv(k: &str, v: String) -> Div {
+    div()
+        .flex()
+        .gap(px(5.))
+        .px(px(7.))
+        .py(px(2.))
+        .rounded(px(4.))
+        .border_1()
+        .border_color(c(LINE2))
+        .bg(c(PANEL2))
+        .text_size(px(11.5))
+        .child(div().text_color(c(MUTED)).child(k.to_string()))
+        .child(div().font_family(NUM_FONT).child(v))
+}

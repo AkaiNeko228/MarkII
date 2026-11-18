@@ -4,18 +4,30 @@ App desktop para Windows (Tauri 2 + Rust, sem Electron) que mostra o estado do P
 
 ## O que mostra
 
+Tudo é lido do PC de quem está usando: nada é fixo para um modelo de CPU, GPU ou placa.
+
 | Bloco | Dados | Fonte |
 |---|---|---|
-| CPU | carga total e por núcleo, clock por núcleo | Windows (sysinfo) |
-| CPU | temperatura do pacote e por núcleo, potência, Vcore | HWiNFO (opcional) |
-| GPU NVIDIA | carga, temperatura, VRAM, potência e limite, clocks, fan | NVML (driver NVIDIA) |
-| Memória | RAM e swap | Windows |
-| Armazenamento | espaço usado por disco | Windows |
-| Rede | download e upload | Windows |
-| Processos | top 6 por CPU | Windows |
-| Ventoinhas | RPM da placa-mãe | HWiNFO (opcional) |
+| CPU | carga por núcleo **ou** por thread (botão no painel), clock min/máx atual e da sessão | Windows |
+| CPU | temperatura do pacote e por núcleo, Core max, potência (pacote e núcleos), Vcore da placa, VID pedido pela CPU e por núcleo, barramento | sensores (LHM) |
+| GPU | uso, temperatura, hotspot, memória, VRM, tensão, consumo e limite, VRAM, clocks, fan (% e rpm) | NVML + sensores |
+| Memória | uso, frequência, tipo, tensão, latência (CL-tRCD-tRP-tRAS em ciclos e ns), temperatura do pente, consumo do controlador, canais | WMI + SPD |
+| Placa-mãe | slots de RAM usados, conectores de fan usados, VRM, chipset, tensões, controladores RGB USB | SMBIOS + chip de sensores |
+| Ventoinhas | quantas existem e quais giram, rpm e % de cada conector | chip de sensores |
+| Discos | espaço, temperatura, vida útil, horas ligado | Windows + SMART |
+| Rede, processos | download/upload, top 6 por CPU | Windows |
 
-O Windows não expõe a temperatura da CPU sem driver. Para ver temperaturas, potência e ventoinhas, abra o **HWiNFO64** em modo *Sensors-only* e ative **Settings → Shared Memory Support**. O app detecta sozinho.
+Quando o sensor não existe no hardware (por exemplo, temperatura da memória numa GPU que não tem esse sensor, ou VRM numa placa sem termistor), o painel mostra "—" com o motivo.
+
+### Sensores completos (LibreHardwareMonitor + PawnIO)
+
+CPU, ventoinhas e placa-mãe só podem ser lidos com acesso de kernel. O app usa a [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) (MPL-2.0) num processo auxiliar, `markii-sensors.exe`, com o driver assinado [PawnIO](https://pawnio.eu/):
+
+- Ao abrir, o app pede permissão de administrador (UAC) **só para o auxiliar**; a interface continua como usuário comum.
+- O auxiliar **só envia** dados por um *named pipe* local; ele não recebe comandos.
+- Se o UAC for recusado, aparece um aviso e o auxiliar roda **sem administrador** (GPU e discos continuam funcionando) com um botão "Tentar com administrador".
+- Se o PawnIO não estiver instalado, o aviso tem o botão "Instalar PawnIO" (usa o instalador oficial que acompanha o release).
+- O HWiNFO continua funcionando como fonte alternativa, se estiver aberto com *Shared Memory Support*.
 
 ## Rodar
 
@@ -28,7 +40,15 @@ cargo build -p markii-gpui --release
 
 No build *release* o GPUI compila shaders com o `fxc.exe` do Windows SDK. O caminho está em `.cargo/config.toml` (`GPUI_FXC_PATH`); ajuste se o seu SDK estiver em outro lugar.
 
-A versão antiga com interface web (Tauri) continua no repositório:
+O auxiliar de sensores é .NET (precisa do SDK .NET 10 só para compilar):
+
+```bash
+dotnet publish sensors -c Release -o target/sensors
+```
+
+O app procura `markii-sensors.exe` ao lado do executável, em `sensors/` ou em `../sensors/` (o `target/sensors` acima serve para `target/release`). A variável `MARKII_SENSORS` aponta para outro caminho.
+
+A versão com interface web (Tauri) continua no repositório e tem os mesmos painéis:
 
 ```bash
 npm install
@@ -39,17 +59,21 @@ npm run dev
 
 ```
 crates/markii-core/   coleta de dados, sem interface
-  lib.rs              Collector: sysinfo + NVML + HWiNFO + clocks reais + alertas
-  hwinfo.rs           memória compartilhada do HWiNFO
-  hw.rs               mapeia sensores do HWiNFO
+  lib.rs              Collector: sysinfo + NVML + sensores + clocks reais + alertas
+  lhm.rs              inicia o auxiliar (UAC), lê o pipe e mapeia os sensores do LHM
+  ram.rs              latência em ciclos, mapa de slots, canais
+  hwinfo.rs           memória compartilhada do HWiNFO (fonte alternativa)
+  hw.rs               estruturas dos sensores + mapeamento do HWiNFO
   cpufreq.rs          clock real por núcleo (contadores PDH do Windows)
   pcinfo.rs           identificação do PC (WMI) e detecção do cooler
   alerts.rs           configuração e motor de alertas
 crates/markii-gpui/   app nativo GPUI
-  view.rs             painel (CPU, GPU, Este PC, refrigeração, alertas, configurações)
+  view.rs             layout, cabeçalho, Este PC, refrigeração, temperaturas, configurações
+  panels.rs           CPU (núcleos/threads), GPU, memória, placa-mãe, ventoinhas, aviso de sensores
   draw.rs             gráficos e sprites desenhados (barras, linhas, ventoinhas, coolers)
   theme.rs            paleta grafite + âmbar
   main.rs             janela, bandeja, notificações, thread de coleta
+sensors/              auxiliar .NET com LibreHardwareMonitorLib (roda com admin)
 src-tauri/ + ui/      versão Tauri (interface web), usa o mesmo markii-core
 ```
 
@@ -63,6 +87,13 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - **Alertas**: CPU, GPU, RAM e discos acima do limite por X segundos → faixa vermelha no app + notificação do Windows, com intervalo para não repetir.
 - **Bandeja**: fechar a janela minimiza para a bandeja; o ícone mostra CPU/GPU/RAM no tooltip; clique abre/esconde; menu com "Sair".
 - Configurações salvas em `%APPDATA%\com.akaineko.markii\config.json`.
+
+## Sprint 4
+
+- Sensores próprios (LibreHardwareMonitor + PawnIO), sem depender do HWiNFO.
+- CPU: alternar entre núcleos e threads; potência, Vcore, VID, Core max, clock mín./máx.
+- GPU compacta com hotspot, memória, VRM, tensão, consumo e clock da memória.
+- Painéis novos de Memória RAM e Placa-mãe; ventoinhas com contagem.
 
 ## Próximos sprints
 

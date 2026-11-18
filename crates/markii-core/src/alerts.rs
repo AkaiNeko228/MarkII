@@ -23,6 +23,10 @@ pub struct Config {
     pub interval_ms: u64,
     /// "auto" | "air" | "water"
     pub cooling: String,
+    /// Start the elevated LibreHardwareMonitor helper (fans, voltages, power, board).
+    pub sensors_admin: bool,
+    /// CPU panel view: "cores" | "threads"
+    pub cpu_view: String,
 }
 
 impl Default for Config {
@@ -39,6 +43,8 @@ impl Default for Config {
             close_to_tray: true,
             interval_ms: 1000,
             cooling: "auto".into(),
+            sensors_admin: true,
+            cpu_view: "cores".into(),
         }
     }
 }

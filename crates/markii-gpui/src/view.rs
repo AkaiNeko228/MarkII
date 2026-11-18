@@ -45,7 +45,7 @@ pub struct Dashboard {
 fn f0(v: Option<f64>) -> String {
     v.filter(|v| v.is_finite()).map_or("—".into(), |v| format!("{:.0}", v))
 }
-fn gb(b: u64) -> String {
+pub(crate) fn gb(b: u64) -> String {
     let g = b as f64 / 1073741824.0;
     if g >= 10.0 { format!("{:.0}", g) } else { format!("{:.1}", g) }
 }
@@ -62,25 +62,31 @@ fn uptime(s: u64) -> String {
     let (d, h, m) = (s / 86400, s % 86400 / 3600, s % 3600 / 60);
     if d > 0 { format!("{d}d {h}h {m}m") } else { format!("{h}h {m}m") }
 }
-fn clean_cpu(n: &str) -> String {
+pub(crate) fn clean_cpu(n: &str) -> String {
     let n = n.replace("(R)", "").replace("(TM)", "").replace("CPU", "");
     let n = n.split('@').next().unwrap_or(&n).to_string();
     n.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 // ---------- building blocks ----------
-fn num(text: impl Into<SharedString>, size: f32) -> Div {
+pub(crate) fn num(text: impl Into<SharedString>, size: f32) -> Div {
     div().font_family(NUM_FONT).font_weight(FontWeight::SEMIBOLD).text_size(px(size)).child(text.into())
 }
-fn small(text: impl Into<SharedString>, color: u32) -> Div {
+pub(crate) fn small(text: impl Into<SharedString>, color: u32) -> Div {
     div().text_size(px(11.5)).text_color(c(color)).child(text.into())
 }
-fn label(text: &str) -> Div {
+pub(crate) fn label(text: &str) -> Div {
     div().font_family(NUM_FONT).font_weight(FontWeight::SEMIBOLD).text_size(px(10.5)).text_color(c(MUTED)).child(text.to_uppercase())
 }
 
 /// Panel with an accent tick and an uppercase header.
-fn panel(accent: u32, title: impl Into<SharedString>, tag: impl Into<SharedString>, alert: bool) -> Div {
+pub(crate) fn panel(accent: u32, title: impl Into<SharedString>, tag: impl Into<SharedString>, alert: bool) -> Div {
+    let tag: SharedString = tag.into();
+    panel_el(accent, title, div().text_size(px(12.)).text_color(c(MUTED)).child(tag).into_any_element(), alert)
+}
+
+/// Same as [`panel`] with any element (e.g. a toggle) on the right of the header.
+pub(crate) fn panel_el(accent: u32, title: impl Into<SharedString>, right: AnyElement, alert: bool) -> Div {
     div()
         .relative()
         .flex()
@@ -99,19 +105,19 @@ fn panel(accent: u32, title: impl Into<SharedString>, tag: impl Into<SharedStrin
                 .flex()
                 .items_center()
                 .mb(px(12.))
-                .child(div().font_family(NUM_FONT).font_weight(FontWeight::SEMIBOLD).text_size(px(11.5)).child(title.into()))
-                .child(div().ml_auto().text_size(px(12.)).text_color(c(MUTED)).child(tag.into())),
+                .child(div().flex_1().min_w_0().font_family(NUM_FONT).font_weight(FontWeight::SEMIBOLD).text_size(px(11.5)).child(title.into()))
+                .child(div().ml(px(8.)).child(right)),
         )
 }
 
-fn segbar(p: f64, n: usize, color: u32, h: f32) -> Div {
+pub(crate) fn segbar(p: f64, n: usize, color: u32, h: f32) -> Div {
     let on = ((p.clamp(0.0, 100.0) / 100.0) * n as f64).round() as usize;
     div().flex().gap(px(1.5)).mt(px(4.)).children((0..n).map(move |i| {
         div().flex_1().h(px(h)).rounded(px(1.)).bg(if i < on { c(color) } else { c(LINE) })
     }))
 }
 
-fn row(k: impl Into<SharedString>, v: impl Into<SharedString>) -> Div {
+pub(crate) fn row(k: impl Into<SharedString>, v: impl Into<SharedString>) -> Div {
     div()
         .flex()
         .items_center()
@@ -274,12 +280,18 @@ impl Dashboard {
             .text_size(px(11.))
             .text_color(c(DIM))
             .child(src("Windows", true, "carga · clocks · RAM · discos · rede"))
-            .child(src("NVML", t.gpu.error.is_none(), if t.gpu.error.is_some() { "offline" } else { "GPU" }))
+            .child(src("NVML", t.gpu.error.is_none(), if t.gpu.error.is_some() { "sem GPU NVIDIA" } else { "GPU" }))
             .child(src(
-                "HWiNFO",
-                t.hwinfo.is_none(),
-                if t.hwinfo.is_some() { "offline — abra para ver temperaturas da CPU e ventoinhas" } else { "temperaturas · potência · fans" },
+                "Sensores",
+                t.lhm_state == "running",
+                match t.lhm_state.as_str() {
+                    "running" => "CPU · placa-mãe · ventoinhas · RAM · GPU",
+                    "limited" => "limitado (sem administrador)",
+                    "starting" | "installing" => "iniciando…",
+                    _ => "desligado",
+                },
             ))
+            .when(t.hwinfo.is_none(), |d| d.child(src("HWiNFO", true, if t.source == "hwinfo" { "em uso" } else { "disponível" })))
     }
 
     fn alert_bar(&self, t: &Telemetry) -> Option<Div> {
@@ -351,7 +363,7 @@ impl Dashboard {
         let cpu_sub = format!(
             "{:.2} GHz · {} núcleos{}",
             t.cpu.mhz_avg as f64 / 1000.0,
-            t.cpu.cores.len(),
+            if t.cpu.phys.is_empty() { t.cpu.cores.len() } else { t.cpu.phys.len() },
             t.cpu.package_temp.map_or(String::new(), |v| format!(" · {v:.0} °C"))
         );
         let gpu_sub = format!(
@@ -367,285 +379,6 @@ impl Dashboard {
             .child(self.vital("GPU", f0(t.gpu.load.map(|v| v as f64)), "%", gpu_sub, GREEN, v(&self.hist.gpu), Some(100.0), keys.contains(&"gpu_temp")))
             .child(self.vital("RAM", f0(t.mem_pct()), "%", format!("{} de {} GB", gb(t.mem.used), gb(t.mem.total)), AMBER, v(&self.hist.mem), Some(100.0), keys.contains(&"ram")))
             .child(self.vital("REDE ↓", rx, rxu, format!("↑ {tx} {txu}"), CYAN, v(&self.hist.net), None, false))
-    }
-
-    // ---------- CPU sprite ----------
-    fn cpu_panel(&self, t: &Telemetry) -> Div {
-        let cpu = &t.cpu;
-        let tile = |c0: &markii_core::CoreT| {
-            let col = if c0.temp.is_some() { temp_col(c0.temp) } else { load_col(Some(c0.load as f64)) };
-            let big = c0.temp.map_or(format!("{:.0}%", c0.load), |v| format!("{v:.0}°"));
-            div()
-                .relative()
-                .rounded(px(3.))
-                .border_1()
-                .border_color(ca(col, 0.45))
-                .bg(mix(col, 0x161b22, 0.14))
-                .px(px(6.))
-                .pt(px(4.))
-                .pb(px(6.))
-                .child(
-                    div()
-                        .flex()
-                        .justify_between()
-                        .font_family(NUM_FONT)
-                        .text_size(px(9.5))
-                        .text_color(c(MUTED))
-                        .child(format!("C{}", c0.idx))
-                        .child(format!("{:.0}%", c0.load)),
-                )
-                .child(num(big, 21.).text_color(c(col)).mt(px(2.)))
-                .child(div().font_family(NUM_FONT).text_size(px(10.)).text_color(c(MUTED)).child(format!("{:.2} GHz", c0.mhz as f64 / 1000.0)))
-                .child(segbar(c0.load as f64, 10, col, 3.))
-        };
-        let (l, r): (Vec<_>, Vec<_>) = cpu.cores.iter().enumerate().partition(|(i, _)| i % 2 == 0);
-        let col = |v: Vec<(usize, &markii_core::CoreT)>| div().flex_1().flex().flex_col().gap(px(5.)).children(v.into_iter().map(|(_, c0)| tile(c0)));
-        let die = div()
-            .border_1()
-            .border_color(c(0x5a6472))
-            .rounded(px(3.))
-            .bg(c(0x1f252d))
-            .w_full()
-            .p(px(8.))
-            .child(
-                div()
-                    .flex()
-                    .justify_center()
-                    .mb(px(6.))
-                    .child(label(&format!("{} núcleos · {:.2} GHz", cpu.cores.len(), cpu.mhz_avg as f64 / 1000.0))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(5.))
-                    .child(col(l))
-                    .child(div().w(px(18.)).rounded(px(2.)).bg(c(0x3a3160)))
-                    .child(col(r)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(5.))
-                    .mt(px(5.))
-                    .text_size(px(9.5))
-                    .text_color(c(MUTED))
-                    .child(div().flex_1().py(px(6.)).flex().justify_center().bg(c(0x1c2129)).border_1().border_color(c(0x2c3440)).rounded(px(3.)).child("iGPU"))
-                    .child(div().flex_1().py(px(6.)).flex().justify_center().bg(c(0x1c2129)).border_1().border_color(c(0x2c3440)).rounded(px(3.)).child("System agent · DDR4")),
-            );
-        let pins = || div().h(px(4.)).mx(px(2.)).bg(ca(0xc9a227, 0.5));
-        let pkg = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .border_1()
-            .border_color(c(0x3a4452))
-            .rounded(px(4.))
-            .bg(c(0x152a1e))
-            .p(px(6.))
-            .child(pins())
-            .child(die)
-            .child(pins());
-        let stat = |l: &str, v: String, col: Option<u32>, sub: Option<&str>| {
-            div()
-                .child(label(l))
-                .child(num(v, 18.).when_some(col, |d, cc| d.text_color(c(cc))))
-                .when_some(sub, |d, s| d.child(div().text_size(px(10.)).text_color(c(MUTED)).child(s.to_string())))
-        };
-        let side = div()
-            .w(px(116.))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(stat("Carga", format!("{:.0} %", cpu.load), Some(load_col(Some(cpu.load as f64))), None))
-            .child(stat(
-                "Pacote",
-                cpu.package_temp.map_or("—".into(), |v| format!("{v:.0} °C")),
-                Some(temp_col(cpu.package_temp)),
-                cpu.package_temp.is_none().then_some("precisa do HWiNFO"),
-            ))
-            .child(stat("Core max", cpu.core_max.map_or("—".into(), |v| format!("{v:.0} °C")), Some(temp_col(cpu.core_max)), None))
-            .child(stat("Potência", cpu.power.map_or("—".into(), |v| format!("{v:.0} W")), None, None))
-            .child(stat("Vcore", cpu.vcore.map_or("—".into(), |v| format!("{v:.3} V")), None, None))
-            .child(stat("RAM", format!("{} / {} GB", gb(t.mem.used), gb(t.mem.total)), None, None));
-        panel(INDIGO, clean_cpu(&cpu.name).to_uppercase(), "por núcleo", t.alerts.iter().any(|a| a.key == "cpu_temp"))
-            .child(div().flex().gap(px(14.)).child(pkg).child(side))
-    }
-
-    // ---------- GPU sprite ----------
-    fn gpu_panel(&self, t: &Telemetry) -> Div {
-        let g = &t.gpu;
-        let short = g.name.replace("NVIDIA ", "");
-        let used = match (g.vram_used, g.vram_total) {
-            (Some(u), Some(tt)) if tt > 0 => u as f64 / tt as f64,
-            _ => 0.0,
-        };
-        let names = ["M0", "M1", "M2", "M3", "M4", "M5"];
-        let chip = |i: usize| {
-            let fill_ = (used * 6.0 - i as f64).clamp(0.0, 1.0);
-            let col = if fill_ > 0.0 { load_col(g.mem_load.map(|v| v as f64)) } else { DIM };
-            div()
-                .w(px(44.))
-                .h(px(34.))
-                .rounded(px(2.))
-                .border_1()
-                .border_color(ca(col, 0.5))
-                .bg(mix(col, 0x141920, 0.14))
-                .opacity(0.4 + fill_ as f32 * 0.6)
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .child(div().font_family(NUM_FONT).text_size(px(8.5)).text_color(c(MUTED)).child(names[i]))
-                .child(num(format!("{:.0}%", fill_ * 100.0), 12.).text_color(c(col)))
-        };
-        let pf = match (g.power_w, g.power_limit_w) {
-            (Some(p), Some(l)) if l > 0.0 => p / l,
-            _ => 0.0,
-        };
-        let lit = (pf * 6.0).round() as usize;
-        let phase_col = load_col(Some(pf * 100.0));
-        let vrm = div()
-            .w(px(90.))
-            .flex()
-            .flex_col()
-            .items_center()
-            .border_1()
-            .border_color(c(0x2c3540))
-            .rounded(px(3.))
-            .bg(c(0x121820))
-            .p(px(8.))
-            .child(label("VRM").mb(px(8.)))
-            .child(div().flex().flex_col().gap(px(6.)).w_full().children((0..6).map(|i| {
-                let on = i < lit;
-                let dot = || div().size(px(9.)).rounded(px(2.)).bg(if on { c(phase_col) } else { c(0x2a323d) });
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(dot())
-                    .child(div().flex_1().h(px(16.)).rounded(px(2.)).border_1().border_color(c(0x333c48)).bg(if on { ca(phase_col, 0.27) } else { c(0x262d37) }))
-                    .child(dot())
-            })))
-            .child(div().flex_1())
-            .child(num(format!("{} W", f0(g.power_w)), 14.).mt(px(6.)));
-        let die_col = temp_col(g.temp.map(|v| v as f64));
-        let die = div()
-            .size(px(116.))
-            .rounded(px(3.))
-            .border_1()
-            .border_color(c(0x5a6472))
-            .bg(c(0x141920))
-            .p(px(9.))
-            .child(
-                div()
-                    .size_full()
-                    .border_1()
-                    .border_color(ca(die_col, 0.55))
-                    .bg(c(0x1b2028))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .child(label(if short.contains("1660") || short.contains("1650") { "TU116" } else { "GPU" }))
-                    .child(num(g.temp.map_or("—".into(), |v| format!("{v}°")), 30.).text_color(c(die_col)))
-                    .child(div().font_family(NUM_FONT).text_size(px(10.)).text_color(c(MUTED)).child(g.clock.map_or("—".into(), |v| format!("{:.2} GHz", v as f64 / 1000.0))))
-                    .child(div().font_family(NUM_FONT).text_size(px(10.)).text_color(c(MUTED)).child(format!("{} % carga", f0(g.load.map(|v| v as f64))))),
-            );
-        let area = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(8.))
-            .child(div().flex().gap(px(8.)).child(chip(0)).child(chip(1)))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(div().flex().flex_col().gap(px(8.)).child(chip(2)).child(chip(3)))
-                    .child(die)
-                    .child(div().flex().flex_col().gap(px(8.)).child(chip(4)).child(chip(5))),
-            )
-            .child(small(
-                format!(
-                    "GDDR6 · {} / {} GB · {}",
-                    g.vram_used.map_or("—".into(), gb),
-                    g.vram_total.map_or("—".into(), gb),
-                    g.mem_clock.map_or("—".into(), |v| format!("{v} MHz"))
-                ),
-                MUTED,
-            ));
-        let conn = div()
-            .w(px(84.))
-            .flex()
-            .flex_col()
-            .items_center()
-            .child(
-                div()
-                    .w_full()
-                    .py(px(7.))
-                    .flex()
-                    .justify_center()
-                    .rounded(px(3.))
-                    .border_1()
-                    .border_color(c(0x8a6b2a))
-                    .bg(c(0x1e1a10))
-                    .font_family(NUM_FONT)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(11.))
-                    .text_color(c(AMBER))
-                    .child("8-PIN"),
-            )
-            .child(num(format!("{} W", f0(g.power_w)), 14.).mt(px(6.)))
-            .child(div().text_size(px(10.)).text_color(c(MUTED)).child(g.power_limit_w.map_or(String::new(), |l| format!("limite {l:.0} W"))))
-            .child(div().flex_1())
-            .child(draw::fan(self.gpu_fan_angle, 66.))
-            .child(div().font_family(NUM_FONT).text_size(px(11.)).text_color(c(MUTED)).child(g.fan.map_or("fan —".into(), |f| format!("fan {f}%"))));
-        let board = div()
-            .relative()
-            .ml(px(18.))
-            .mb(px(18.))
-            .h(px(292.))
-            .flex()
-            .gap(px(12.))
-            .border_1()
-            .border_color(c(0x3a4452))
-            .rounded(px(4.))
-            .bg(c(0x0e1318))
-            .pl(px(18.))
-            .pr(px(14.))
-            .pt(px(14.))
-            .pb(px(16.))
-            .child(
-                div().absolute().left(px(-18.)).top_0().bottom_0().w(px(14.)).bg(c(0x2a313b)).rounded_l(px(3.)).flex().flex_col().justify_around().px(px(3.)).py(px(10.)).children(
-                    (0..3).map(|_| div().h(px(36.)).rounded(px(2.)).bg(c(0x10141a))),
-                ),
-            )
-            .child(vrm)
-            .child(area)
-            .child(conn)
-            .child(
-                div()
-                    .absolute()
-                    .left(gpui::relative(0.22))
-                    .right(gpui::relative(0.30))
-                    .bottom(px(-13.))
-                    .h(px(12.))
-                    .flex()
-                    .gap(px(2.))
-                    .children((0..40).map(|_| div().flex_1().bg(c(0xc9a227)))),
-            );
-        let cap = g.error.clone().unwrap_or_else(|| {
-            format!("{} W de {} W · {:.0} % do limite de energia", f0(g.power_w), f0(g.power_limit_w), pf * 100.0)
-        });
-        panel(GREEN, short.to_uppercase(), g.vram_total.map_or(String::new(), |v| format!("{} GB · NVML", gb(v))), t.alerts.iter().any(|a| a.key == "gpu_temp"))
-            .child(board)
-            .child(div().flex().justify_center().child(num(cap, 13.)))
     }
 
     // ---------- this PC ----------
@@ -769,7 +502,7 @@ impl Dashboard {
         let tip = match k.kind.as_str() {
             "water" => "Water cooler: a bomba precisa estar sempre girando. Se a rotação cair a zero a CPU esquenta em segundos. Limpe o radiador a cada 6 meses.",
             "air" => "Air cooler: limpe a poeira das aletas a cada 3–6 meses. CPU acima de 85 °C em carga costuma indicar pasta térmica velha ou ventoinha fraca.",
-            _ => "Abra o HWiNFO (Shared Memory) para o app ler as ventoinhas e a bomba, ou escolha o tipo em Configurações.",
+            _ => "Ative os sensores completos (aviso no topo) para o app ler as ventoinhas e a bomba, ou escolha o tipo em Configurações.",
         };
         panel(CYAN, "REFRIGERAÇÃO DA CPU", conf, false).child(
             div()
@@ -847,20 +580,11 @@ impl Dashboard {
                 )
                 .child(segbar(p, 20, col, 6.))
         }))
+        .when(!t.hw.drives.is_empty(), |d| d.child(label("Saúde dos discos").mt(px(10.)).mb(px(2.))).children(self.drives_rows(t)))
     }
 
     fn procs_panel(&self, t: &Telemetry) -> Div {
         panel(PINK, "PROCESSOS", "top CPU", false).children(t.procs.iter().map(|p| row(p.name.clone(), format!("{:.1} % · {} MB", p.cpu, p.mem / 1048576))))
-    }
-
-    fn fans_panel(&self, t: &Telemetry) -> Div {
-        let mut rows: Vec<Div> = Vec::new();
-        if let Some(f) = t.gpu.fan {
-            rows.push(row("GPU", format!("{f} %")));
-        }
-        rows.extend(t.fans.iter().map(|f| row(f.label.clone(), format!("{:.0} rpm", f.rpm))));
-        let p = panel(CYAN, "VENTOINHAS", if t.hwinfo.is_some() { "HWiNFO offline" } else { "HWiNFO" }, false).children(rows);
-        if t.fans.is_empty() { p.child(small("Abra o HWiNFO para ver as ventoinhas da placa-mãe.", DIM).pt(px(6.))) } else { p }
     }
 
     // ---------- settings ----------
@@ -1036,6 +760,27 @@ impl Dashboard {
                             .child(cool_opt("c-air", "air", "Air cooler"))
                             .child(cool_opt("c-water", "water", "Water cooler")),
                     )
+                    .child(h3("Sensores"))
+                    .child(toggle("t-admin", "Pedir administrador (UAC) ao abrir: CPU, ventoinhas e placa-mãe", s.sensors_admin, |s| s.sensors_admin = !s.sensors_admin))
+                    .child(small(
+                        format!(
+                            "Estado: {} · driver PawnIO {}",
+                            self.t.as_ref().map_or("—".to_string(), |t| t.lhm_msg.clone()),
+                            if markii_core::lhm::pawnio_installed() { "instalado" } else { "não instalado" }
+                        ),
+                        MUTED,
+                    ))
+                    .child(
+                        div().flex().gap(px(8.)).mt(px(8.)).child(btn("restart-sensors", "Reiniciar sensores", false).on_click(cx.listener(|this, _, _, cx| {
+                            let (iv, admin) = {
+                                let c0 = this.cfg.lock().unwrap();
+                                (c0.interval_ms, this.settings.as_ref().map_or(c0.sensors_admin, |s| s.sensors_admin))
+                            };
+                            markii_core::lhm::global().start(iv, admin && markii_core::lhm::pawnio_installed());
+                            this.save_msg = "reiniciando sensores…".into();
+                            cx.notify();
+                        }))),
+                    )
                     .child(h3("Janela"))
                     .child(toggle("t-tray", "Fechar minimiza para a bandeja", s.close_to_tray, |s| s.close_to_tray = !s.close_to_tray))
                     .child(
@@ -1053,8 +798,8 @@ impl Dashboard {
                             .child(btn("save", "Salvar", true).on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(s) = this.settings.take() {
                                     let mut c0 = this.cfg.lock().unwrap();
-                                    let interval = c0.interval_ms;
-                                    *c0 = Config { interval_ms: interval, ..s };
+                                    let (interval, view) = (c0.interval_ms, c0.cpu_view.clone());
+                                    *c0 = Config { interval_ms: interval, cpu_view: view, ..s };
                                     let _ = c0.save(&this.cfg_path);
                                 }
                                 cx.notify();
@@ -1098,12 +843,14 @@ impl Render for Dashboard {
                         .gap(px(12.))
                         .child(self.header(&t, cx))
                         .when_some(self.alert_bar(&t), |d, a| d.child(a))
+                        .when_some(self.sensors_bar(&t, cx), |d, a| d.child(a))
                         .child(self.sources(&t))
                         .child(self.vitals(&t))
-                        .child(div().flex().gap(px(12.)).child(self.cpu_panel(&t).w(gpui::relative(0.43)).flex_none()).child(self.gpu_panel(&t).flex_1()))
-                        .child(duo(self.pc_panel(), self.cool_panel(&t)))
+                        .child(duo(self.cpu_panel(&t, cx), self.gpu_panel(&t)))
+                        .child(duo(self.ram_panel(&t), self.board_panel(&t)))
+                        .child(duo(self.fans_panel(&t), self.cool_panel(&t)))
                         .child(duo(self.therm_panel(&t), self.disk_panel(&t)))
-                        .child(duo(self.procs_panel(&t), self.fans_panel(&t))),
+                        .child(duo(self.pc_panel(), self.procs_panel(&t))),
                 ),
         )
         .when_some(settings, |d, s| d.child(self.settings_sheet(&s, cx)))

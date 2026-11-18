@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use markii_core::{alerts::Config, pcinfo, Collector};
+use markii_core::{alerts::Config, lhm, pcinfo, ram, Collector};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -46,6 +46,29 @@ fn set_interval(st: State<Arc<Shared>>, ms: u64) -> Result<(), String> {
     let mut c = st.cfg.lock().unwrap();
     c.interval_ms = ms.clamp(250, 10_000);
     c.save(&st.path)
+}
+
+/// (Re)starts the sensor helper; `admin` asks for UAC (full sensors).
+#[tauri::command]
+fn sensors_start(st: State<Arc<Shared>>, admin: bool) {
+    lhm::global().start(st.cfg().interval_ms, admin && lhm::pawnio_installed());
+}
+
+/// Installs the PawnIO driver (UAC) and restarts the helper with admin.
+#[tauri::command]
+fn sensors_install(st: State<Arc<Shared>>) {
+    lhm::global().install_then_start(st.cfg().interval_ms);
+}
+
+#[derive(serde::Serialize)]
+struct RamLayout {
+    slots: Vec<ram::Slot>,
+    mode: &'static str,
+}
+
+#[tauri::command]
+fn ram_layout(st: State<Arc<Shared>>) -> Option<RamLayout> {
+    st.pc.lock().unwrap().as_ref().map(|pc| RamLayout { slots: ram::slots(pc), mode: ram::channel_mode(pc) })
 }
 
 #[tauri::command]
@@ -95,7 +118,7 @@ fn show_main(app: &tauri::AppHandle) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_config, save_config, set_interval, test_alert, get_pcinfo])
+        .invoke_handler(tauri::generate_handler![get_config, save_config, set_interval, test_alert, get_pcinfo, sensors_start, sensors_install, ram_layout])
         .on_window_event(|w, ev| {
             if let WindowEvent::CloseRequested { api, .. } = ev {
                 let st = w.app_handle().state::<Arc<Shared>>();

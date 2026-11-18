@@ -11,8 +11,28 @@ pub struct RamModule {
     pub slot: String,
     pub size_gb: f64,
     pub speed: u32,
+    /// Speed the module is actually running at (MT/s).
+    pub configured: u32,
+    /// Configured voltage in millivolts (0 = not reported).
+    pub mv: u32,
+    /// SMBIOS memory type code (26 = DDR4, 34 = DDR5, 24 = DDR3).
+    pub kind: u32,
+    pub bank: String,
     pub maker: String,
     pub part: String,
+}
+
+impl RamModule {
+    pub fn type_name(&self) -> &'static str {
+        match self.kind {
+            34 => "DDR5",
+            26 => "DDR4",
+            24 => "DDR3",
+            30 => "LPDDR4",
+            35 => "LPDDR5",
+            _ => "RAM",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
@@ -31,6 +51,12 @@ pub struct PcInfo {
     pub model: String,
     pub board_maker: String,
     pub board: String,
+    pub board_version: String,
+    /// Memory slots the board reports in SMBIOS.
+    pub ram_slots: u32,
+    pub ram_max_gb: f64,
+    /// RGB / lighting controllers found among PnP devices.
+    pub rgb_devices: Vec<String>,
     pub bios: String,
     pub os: String,
     pub os_build: String,
@@ -54,11 +80,13 @@ $ErrorActionPreference='SilentlyContinue'
 $cs=Get-CimInstance Win32_ComputerSystem; $bb=Get-CimInstance Win32_BaseBoard; $bi=Get-CimInstance Win32_BIOS
 $os=Get-CimInstance Win32_OperatingSystem; $p=Get-CimInstance Win32_Processor | Select-Object -First 1
 $gpu=Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch 'Virtual|Parsec|Remote|Basic Display|Meta|Mirage' }
-$ram=Get-CimInstance Win32_PhysicalMemory | ForEach-Object { [pscustomobject]@{slot=[string]$_.DeviceLocator; size_gb=[math]::Round($_.Capacity/1GB,1); speed=[int]$_.Speed; maker=([string]$_.Manufacturer).Trim(); part=([string]$_.PartNumber).Trim()} }
+$ram=Get-CimInstance Win32_PhysicalMemory | ForEach-Object { [pscustomobject]@{slot=[string]$_.DeviceLocator; size_gb=[math]::Round($_.Capacity/1GB,1); speed=[int]$_.Speed; configured=[int]$_.ConfiguredClockSpeed; mv=[int]$_.ConfiguredVoltage; kind=[int]$_.SMBIOSMemoryType; bank=[string]$_.BankLabel; maker=([string]$_.Manufacturer).Trim(); part=([string]$_.PartNumber).Trim()} }
+$arr=@(Get-CimInstance Win32_PhysicalMemoryArray | Where-Object { $_.Use -eq 3 }); $slots=($arr | Measure-Object MemoryDevices -Sum).Sum; $maxkb=($arr | Measure-Object MaxCapacityEx -Sum).Sum
+$rgb=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'RGB|Aura|Mystic Light|Polychrome|LED Controller|Lighting|Chroma|ENE |Spectrix|Fusion|iCUE' -and $_.Name -notmatch 'Audio|Display|Monitor' } | Select-Object -ExpandProperty Name -Unique
 $disks=Get-PhysicalDisk | ForEach-Object { [pscustomobject]@{model=([string]$_.FriendlyName).Trim(); size_gb=[math]::Round($_.Size/1GB); media=[string]$_.MediaType; bus=[string]$_.BusType} }
 $cool=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|CoreLiquid|Cooler Master|Aqua|Arctic|EKWB|Thermaltake|Riing|Pump' } | Select-Object -ExpandProperty Name -Unique
 [pscustomobject]@{
- maker=[string]$cs.Manufacturer; model=[string]$cs.Model; board_maker=[string]$bb.Manufacturer; board=[string]$bb.Product
+ maker=[string]$cs.Manufacturer; model=[string]$cs.Model; board_maker=[string]$bb.Manufacturer; board=[string]$bb.Product; board_version=[string]$bb.Version; ram_slots=[int]$slots; ram_max_gb=[math]::Round($maxkb/1MB); rgb_devices=@($rgb)
  bios=("{0} {1}" -f $bi.Manufacturer,$bi.SMBIOSBIOSVersion).Trim(); os=[string]$os.Caption; os_build=("{0} build {1}" -f $os.Version,$os.BuildNumber)
  cpu=([string]$p.Name).Trim(); cpu_cores=[int]$p.NumberOfCores; cpu_threads=[int]$p.NumberOfLogicalProcessors; cpu_max_mhz=[int]$p.MaxClockSpeed
  cpu_l3_kb=[int]$p.L3CacheSize; cpu_socket=[string]$p.SocketDesignation
@@ -110,7 +138,12 @@ fn cpu_fan_re() -> &'static Regex {
 
 pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) -> Cooling {
     let pump = fans.iter().find(|f| pump_re().is_match(&f.label) && f.rpm > 300.0);
-    let cpu_fan = fans.iter().find(|f| cpu_fan_re().is_match(&f.label) && f.rpm > 0.0);
+    // Named "CPU fan" header, or — on boards whose headers are unnamed — the only one spinning.
+    let spinning: Vec<&Fan> = fans.iter().filter(|f| f.rpm > 0.0).collect();
+    let cpu_fan = fans
+        .iter()
+        .find(|f| cpu_fan_re().is_match(&f.label) && f.rpm > 0.0)
+        .or_else(|| (spinning.len() == 1).then(|| spinning[0]));
     let mut c = Cooling {
         pump_rpm: pump.map(|f| f.rpm),
         cpu_fan_rpm: cpu_fan.map(|f| f.rpm),
@@ -129,10 +162,13 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) 
                 ("water", "medium", format!("controlador de water cooler encontrado: {d}"))
             } else if let Some(f) = cpu_fan {
                 ("air", "medium", format!("ventoinha da CPU em “{}” ({:.0} rpm) e nenhuma bomba", f.label, f.rpm))
+            } else if fans.iter().any(|f| f.rpm > 0.0) {
+                let n = fans.iter().filter(|f| f.rpm > 0.0).count();
+                ("air", "low", format!("{n} ventoinha(s) girando na placa e nenhuma bomba ou controlador de water cooler"))
             } else if hwinfo_ok {
                 ("air", "low", "nenhuma bomba nos sensores".to_string())
             } else {
-                ("unknown", "low", "abra o HWiNFO ou escolha nas configurações".to_string())
+                ("unknown", "low", "ative os sensores avançados ou escolha nas configurações".to_string())
             }
         }
     };

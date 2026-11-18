@@ -5,7 +5,9 @@ pub mod alerts;
 pub mod cpufreq;
 pub mod hw;
 pub mod hwinfo;
+pub mod lhm;
 pub mod pcinfo;
+pub mod ram;
 
 pub use alerts::{Active, Config};
 pub use pcinfo::{Cooling, PcInfo};
@@ -21,9 +23,12 @@ use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 #[derive(Serialize, Clone, Default, Debug)]
 pub struct CoreT {
     pub idx: usize,
+    /// "P" / "E" for hybrid CPUs, "" for logical threads.
+    pub kind: String,
     pub load: f32,
     pub mhz: u64,
     pub temp: Option<f64>,
+    pub volt: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
@@ -36,6 +41,19 @@ pub struct CpuT {
     pub core_max: Option<f64>,
     pub power: Option<f64>,
     pub vcore: Option<f64>,
+    /// Voltage the CPU requests (VID / SVI).
+    pub vid: Option<f64>,
+    pub cores_power: Option<f64>,
+    pub mem_power: Option<f64>,
+    pub bus_mhz: Option<f64>,
+    /// Physical cores (from the sensor source); `cores` holds logical threads.
+    pub phys: Vec<CoreT>,
+    /// Lowest / highest core clock right now and over this session.
+    pub mhz_min: u64,
+    pub mhz_max: u64,
+    pub session_min: u64,
+    pub session_max: u64,
+    pub threads: usize,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
@@ -51,6 +69,12 @@ pub struct GpuT {
     pub clock: Option<u32>,
     pub mem_clock: Option<u32>,
     pub fan: Option<u32>,
+    pub fan_rpm: Option<f64>,
+    pub hotspot: Option<f64>,
+    pub mem_temp: Option<f64>,
+    pub vrm_temp: Option<f64>,
+    pub voltage: Option<f64>,
+    pub bus_width: Option<u32>,
     pub error: Option<String>,
 }
 
@@ -99,6 +123,14 @@ pub struct Telemetry {
     pub hwinfo: Option<String>,
     pub alerts: Vec<Active>,
     pub cooling: Cooling,
+    /// Everything the sensor source reported (board, SPD, drives, per-core...).
+    pub hw: hw::HwSnapshot,
+    /// "lhm" | "hwinfo" | "" - where `hw` came from.
+    pub source: String,
+    /// "off" | "starting" | "running" | "limited" | "failed" | "stopped"
+    pub lhm_state: String,
+    pub lhm_msg: String,
+    pub pawnio: bool,
 }
 
 impl Telemetry {
@@ -124,6 +156,33 @@ impl Telemetry {
     }
 }
 
+/// NVML is the primary GPU source; the sensor source fills what NVML lacks
+/// (hot spot, memory/VRM temperature, voltage) or replaces it for non-NVIDIA cards.
+fn merge_gpu(mut g: GpuT, s: Option<&hw::Gpu>) -> GpuT {
+    let Some(s) = s else { return g };
+    if g.error.is_some() && !s.name.is_empty() {
+        g = GpuT {
+            name: s.name.clone(),
+            temp: s.temp.map(|v| v.round() as u32),
+            load: s.load.map(|v| v.round() as u32),
+            mem_load: s.mem_load.map(|v| v.round() as u32),
+            vram_used: s.vram_used_mb.map(|v| (v * 1048576.0) as u64),
+            vram_total: s.vram_total_mb.map(|v| (v * 1048576.0) as u64),
+            power_w: s.power,
+            clock: s.clock.map(|v| v.round() as u32),
+            mem_clock: s.mem_clock.map(|v| v.round() as u32),
+            fan: s.fan_pct.map(|v| v.round() as u32),
+            ..Default::default()
+        };
+    }
+    g.hotspot = s.hotspot;
+    g.mem_temp = s.mem_junction;
+    g.vrm_temp = s.vrm;
+    g.voltage = s.voltage;
+    g.fan_rpm = s.fan_rpm;
+    g
+}
+
 pub fn pct(u: u64, tot: u64) -> Option<f64> {
     if tot > 0 { Some(u as f64 / tot as f64 * 100.0) } else { None }
 }
@@ -139,6 +198,9 @@ pub struct Collector {
     no_overrides: HashMap<String, String>,
     last: Instant,
     tick: u64,
+    lhm_started: bool,
+    lo: u64,
+    hi: u64,
 }
 
 impl Default for Collector {
@@ -161,6 +223,9 @@ impl Collector {
             no_overrides: HashMap::new(),
             last: Instant::now(),
             tick: 0,
+            lhm_started: false,
+            lo: u64::MAX,
+            hi: 0,
         }
     }
 
@@ -187,7 +252,8 @@ impl Collector {
             clock: dev.clock_info(Clock::Graphics).ok(),
             mem_clock: dev.clock_info(Clock::Memory).ok(),
             fan: dev.fan_speed(0).ok(),
-            error: None,
+            bus_width: dev.memory_bus_width().ok(),
+            ..Default::default()
         }
     }
 
@@ -206,10 +272,23 @@ impl Collector {
         }
         self.tick += 1;
 
-        // HWiNFO is optional: temperatures, power and fans.
-        let (hwsnap, hwinfo_err) = match hwinfo::read() {
+        // Sensor sources, best first: LHM helper with admin, HWiNFO, LHM without admin.
+        let sensors = lhm::global();
+        if !self.lhm_started && lhm::helper_path().is_some() {
+            self.lhm_started = true;
+            sensors.start(cfg.interval_ms, cfg.sensors_admin && lhm::pawnio_installed());
+        }
+        let status = sensors.status();
+        let lhm_snap = sensors.latest().map(|s| lhm::map(&s));
+        let (hwi_snap, hwinfo_err) = match hwinfo::read() {
             Ok(r) => (Some(hw::map(&r, &self.no_overrides)), None),
             Err(e) => (None, Some(e)),
+        };
+        let (hwsnap, source) = match (lhm_snap, hwi_snap) {
+            (Some(l), _) if status == lhm::Status::Running => (Some(l), "lhm"),
+            (_, Some(h)) => (Some(h), "hwinfo"),
+            (Some(l), None) => (Some(l), "lhm"),
+            (None, None) => (None, ""),
         };
         let hcore = |i: usize| hwsnap.as_ref().and_then(|h| h.cpu.cores.iter().find(|c| c.idx as usize == i));
         let real = self.freq.as_mut().map(|f| f.sample()).unwrap_or_default();
@@ -225,8 +304,31 @@ impl Collector {
                     .or(real.get(i).copied().flatten())
                     .unwrap_or(c.frequency()),
                 temp: hcore(i).and_then(|h| h.temp),
+                volt: hcore(i).and_then(|h| h.vid),
+                kind: String::new(),
             })
             .collect();
+        let phys: Vec<CoreT> = match hwsnap.as_ref().map(|h| &h.cpu.cores).filter(|c| !c.is_empty()) {
+            Some(cs) => cs
+                .iter()
+                .enumerate()
+                .map(|(i, c)| CoreT {
+                    idx: i,
+                    kind: c.kind.clone(),
+                    load: c.load.unwrap_or(0.0) as f32,
+                    mhz: c.clock.map(|v| v.round() as u64).unwrap_or(0),
+                    temp: c.temp,
+                    volt: c.vid,
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let clocks: Vec<u64> = phys.iter().chain(cores.iter()).map(|c| c.mhz).filter(|m| *m > 0).collect();
+        let (mhz_min, mhz_max) = (clocks.iter().copied().min().unwrap_or(0), clocks.iter().copied().max().unwrap_or(0));
+        if mhz_max > 0 {
+            self.lo = self.lo.min(mhz_min);
+            self.hi = self.hi.max(mhz_max);
+        }
         let mhz_avg = if cores.is_empty() { 0 } else { cores.iter().map(|c| c.mhz).sum::<u64>() / cores.len() as u64 };
         let hc = hwsnap.as_ref().map(|h| &h.cpu);
 
@@ -259,8 +361,18 @@ impl Collector {
                 core_max: hc.and_then(|c| c.core_max),
                 power: hc.and_then(|c| c.power),
                 vcore: hc.and_then(|c| c.vcore),
+                vid: hc.and_then(|c| c.vid),
+                cores_power: hc.and_then(|c| c.ia_power),
+                mem_power: hc.and_then(|c| c.mem_power),
+                bus_mhz: hc.and_then(|c| c.bus),
+                threads: cpus.len(),
+                phys,
+                mhz_min,
+                mhz_max,
+                session_min: if self.lo == u64::MAX { 0 } else { self.lo },
+                session_max: self.hi,
             },
-            gpu: self.gpu(),
+            gpu: merge_gpu(self.gpu(), hwsnap.as_ref().map(|h| &h.gpu)),
             mem: MemT {
                 used: self.sys.used_memory(),
                 total: self.sys.total_memory(),
@@ -281,10 +393,24 @@ impl Collector {
                 .collect(),
             net: NetT { rx_bps: rx as f64 / dt, tx_bps: tx as f64 / dt },
             procs,
-            cooling: pcinfo::detect(&cfg.cooling, pc, &fans, hwinfo_err.is_none()),
+            cooling: pcinfo::detect(&cfg.cooling, pc, &fans, hwsnap.as_ref().is_some_and(|h| !h.fans.is_empty())),
             fans,
             hwinfo: hwinfo_err,
             alerts: Vec::new(),
+            hw: hwsnap.clone().unwrap_or_default(),
+            source: source.into(),
+            lhm_state: match &status {
+                lhm::Status::Off => "off",
+                lhm::Status::Starting => "starting",
+                lhm::Status::Installing => "installing",
+                lhm::Status::Running => "running",
+                lhm::Status::Limited => "limited",
+                lhm::Status::Failed(_) => "failed",
+                lhm::Status::Stopped => "stopped",
+            }
+            .into(),
+            lhm_msg: status.text(),
+            pawnio: lhm::pawnio_installed(),
         };
 
         let mut checks = vec![

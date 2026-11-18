@@ -29,6 +29,7 @@
 </header>
 
 <div class="alertbar" id="alertbar" hidden></div>
+<div class="sensbar" id="sensbar" hidden><span class="w">⚠</span><span id="sens-msg"></span><button class="btn warn" id="sens-act" hidden></button></div>
 <div class="srcbar" id="status"></div>
 
 <main>
@@ -40,55 +41,70 @@
     <div class="vital" id="v-net" style="--a:var(--cyan)"><div class="vk">REDE ↓</div><div class="vv"><span id="net-rx">—</span><u id="net-rx-u"></u></div><div class="vs" id="net-sub">—</div><canvas class="bars" id="sp-net"></canvas></div>
   </section>
 
-  <!-- hero: hardware sprites -->
+  <!-- hero: CPU + GPU -->
   <section class="hero">
     <div class="panel" id="p-cpu" style="--a:var(--indigo)">
-      <div class="ph"><span id="cpu-name">CPU</span><em id="cpu-src">por núcleo</em></div>
+      <div class="ph"><span id="cpu-name">CPU</span>
+        <div class="seg sm" id="cpuview"><button data-v="cores">Núcleos</button><button data-v="threads">Threads</button></div></div>
       <div class="cpuwrap">
         <div class="pkg">
           <div class="pins t"></div><div class="pins b"></div>
           <div class="die">
-            <div class="dielbl" id="die-lbl">DIE</div>
-            <div class="coregrid">
-              <div class="col" id="col-l"></div>
-              <div class="ring"><span id="ring-lbl">Ring / L3</span></div>
-              <div class="col" id="col-r"></div>
-            </div>
-            <div class="uncore"><div>iGPU</div><div>System agent · DDR4</div></div>
+            <div class="dielbl" id="die-lbl">—</div>
+            <div class="coregrid2" id="cores"></div>
           </div>
         </div>
         <div class="side" id="cpu-side"></div>
       </div>
+      <div class="note" id="cpu-note" hidden></div>
     </div>
 
     <div class="panel" id="p-gpu" style="--a:var(--green)">
       <div class="ph"><span id="gpu-name">GPU</span><em id="gpu-tag2"></em></div>
-      <div class="board">
-        <div class="bracket"><i></i><i></i><i></i></div>
-        <div class="vrm"><div class="blbl">VRM</div><div class="chokes" id="chokes"></div><div class="pv" id="vrm-w">—</div></div>
-        <div class="gpuarea">
-          <div class="mems top" id="mem-top"></div>
-          <div class="memrow">
-            <div class="mems side" id="mem-l"></div>
-            <div class="gdie" id="gdie"><div class="gdl" id="gdie-name">GPU</div><div class="gdt" id="gdie-t">—</div><div class="gds" id="gdie-s">—</div><div class="gds" id="gdie-s2">—</div></div>
-            <div class="mems side" id="mem-r"></div>
-          </div>
-          <div class="memcap" id="mem-cap">—</div>
-        </div>
-        <div class="pconn"><div class="plug">8-PIN</div><div class="pv" id="pc-w">—</div><div class="ps" id="pc-s">—</div>
-          <div class="fanspr"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" class="ring2"/><g id="fanblades"><path d="M20 20 C20 8 28 6 30 10 C31 14 24 16 20 20Z"/><path d="M20 20 C32 20 34 28 30 30 C26 31 24 24 20 20Z"/><path d="M20 20 C20 32 12 34 10 30 C9 26 16 24 20 20Z"/><path d="M20 20 C8 20 6 12 10 10 C14 9 16 16 20 20Z"/></g><circle cx="20" cy="20" r="3" class="hub"/></svg><span id="fan-lbl">—</span></div>
-        </div>
-        <div class="fingers"></div>
+      <div class="gcard">
+        <div class="gpkg"><div class="mrow" id="mem-top"></div>
+          <div class="gdie2" id="gdie"><div class="gdt" id="gdie-t">—</div><div class="gds" id="gdie-s">—</div></div>
+          <div class="mrow" id="mem-bot"></div></div>
+        <div class="guse"><div class="sl">USO</div><div class="gu" id="g-use">—</div><div class="seg10" id="g-bar"></div><div class="gsub" id="g-vram">—</div></div>
+        <div class="fanspr"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" class="ring2"/><g id="fanblades"><path d="M20 20 C20 8 28 6 30 10 C31 14 24 16 20 20Z"/><path d="M20 20 C32 20 34 28 30 30 C26 31 24 24 20 20Z"/><path d="M20 20 C20 32 12 34 10 30 C9 26 16 24 20 20Z"/><path d="M20 20 C8 20 6 12 10 10 C14 9 16 16 20 20Z"/></g><circle cx="20" cy="20" r="3" class="hub"/></svg><span id="fan-lbl">—</span></div>
       </div>
-      <div class="bcap" id="board-cap">—</div>
+      <div class="cells c4" id="gpu-cells"></div>
+      <div class="note" id="gpu-err" hidden></div>
     </div>
   </section>
 
-  <!-- identity + cooling -->
+  <!-- memory + motherboard -->
   <section class="duo">
-    <div class="panel" id="p-pc" style="--a:var(--amber)">
-      <div class="ph">Este PC<em id="pc-tag">identificando…</em></div>
-      <div class="spec" id="pc-spec"><div class="empty">lendo informações do sistema…</div></div>
+    <div class="panel" id="p-ram" style="--a:var(--amber)">
+      <div class="ph">Memória RAM<em id="ram-tag"></em></div>
+      <div class="bigline"><b id="ram-pct">—</b><span id="ram-sub"></span></div>
+      <div class="seg10 s30" id="ram-bar"></div>
+      <div class="cells c3" id="ram-cells"></div>
+      <div class="rows" id="ram-mods"></div>
+    </div>
+    <div class="panel" id="p-board" style="--a:var(--orange)">
+      <div class="ph"><span id="board-name">Placa-mãe</span><em id="board-chip"></em></div>
+      <div class="mobo">
+        <div><div class="sl">SLOTS DE RAM</div><div class="slots" id="slots"></div></div>
+        <div class="mobo-r">
+          <div class="sl" id="hdr-lbl">CONECTORES DE FAN</div><div class="hdrs" id="hdrs"></div>
+          <div class="sl">RGB</div><div id="rgb"></div>
+          <div class="note">Conectores RGB/ARGB da placa (5 V/12 V) são passivos: nenhum software consegue ver se estão em uso.</div>
+        </div>
+      </div>
+      <div class="cells c4" id="board-cells"></div>
+      <div class="chips kv" id="board-chips"></div>
+      <div class="note" id="board-note"></div>
+    </div>
+  </section>
+
+  <!-- fans + cooling -->
+  <section class="duo">
+    <div class="panel" id="p-fans" style="--a:var(--cyan)">
+      <div class="ph">Ventoinhas<em id="fans-tag"></em></div>
+      <div class="bigline"><b id="fan-count" style="color:var(--cyan)">—</b><span id="fan-count-l"></span></div>
+      <div class="rows" id="fans"></div>
+      <div class="note" id="fans-note"></div>
     </div>
     <div class="panel" id="p-cool" style="--a:var(--cyan)">
       <div class="ph">Refrigeração da CPU<em id="cool-conf">—</em></div>
@@ -119,12 +135,17 @@
     <div class="panel" style="--a:var(--amber)">
       <div class="ph">Armazenamento<em id="disk-tag"></em></div>
       <div class="rows" id="disks"></div>
+      <div class="sl" id="drv-lbl" hidden style="margin-top:10px">SAÚDE DOS DISCOS</div>
+      <div class="rows" id="drives"></div>
     </div>
   </section>
 
   <section class="duo">
+    <div class="panel" id="p-pc" style="--a:var(--amber)">
+      <div class="ph">Este PC<em id="pc-tag">identificando…</em></div>
+      <div class="spec" id="pc-spec"><div class="empty">lendo informações do sistema…</div></div>
+    </div>
     <div class="panel" style="--a:var(--pink)"><div class="ph">Processos<em>top CPU</em></div><div class="rows" id="procs"></div></div>
-    <div class="panel" style="--a:var(--cyan)"><div class="ph">Ventoinhas<em id="fans-tag">HWiNFO</em></div><div class="rows" id="fans"></div></div>
   </section>
 </main>
 
@@ -147,6 +168,10 @@
     <div class="fields one">
       <label>Tipo de cooler<select id="c-cooling"><option value="auto">Detectar automaticamente</option><option value="air">Air cooler</option><option value="water">Water cooler (AIO / custom)</option></select></label>
     </div>
+    <h3>Sensores</h3>
+    <label class="tg"><input type="checkbox" id="c-admin"><span>Pedir administrador (UAC) ao abrir: CPU, ventoinhas e placa-mãe</span></label>
+    <div class="note" id="sens-state">—</div>
+    <div class="sf" style="margin-top:8px"><button class="btn ghost" id="sens-restart">Reiniciar sensores</button></div>
     <h3>Janela</h3>
     <label class="tg"><input type="checkbox" id="c-tray"><span>Fechar minimiza para a bandeja</span></label>
     <div class="sf"><button class="btn ghost" id="test-alert">Testar notificação</button><span id="save-msg"></span><button class="btn" id="save-settings">Salvar</button></div>

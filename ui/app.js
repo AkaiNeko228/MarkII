@@ -63,67 +63,190 @@ function lines(id, series) {
   }
 }
 
-// ---------- CPU sprite ----------
-function coreTile(c) {
-  const hasT = c.temp != null, col = hasT ? tcol(c.temp) : lcol(c.load);
-  return `<div class="core" style="--c:${col}"><span class="cn">C${c.idx}</span><span class="cl">${f0(c.load)}%</span>
-    <div class="ct">${hasT ? f0(c.temp) + "°" : f0(c.load) + "%"}</div><div class="cf">${(c.mhz / 1000).toFixed(2)} GHz</div>
+// ---------- shared bits ----------
+const opt = (v, fmt) => (v == null || !isFinite(v) ? "—" : fmt(v));
+const needs = (t) => (!t.source || t.lhm_state === "limited" ? "precisa dos sensores completos" : "");
+function cell(k, v, col, note) {
+  const miss = v === "—";
+  return `<div class="cell"><div class="sl">${k}</div><b class="${miss ? "dim" : ""}" ${!miss && col ? `style="color:${col}"` : ""}>${v}</b>${note ? `<span>${esc(note)}</span>` : ""}</div>`;
+}
+
+// ---------- CPU ----------
+let cpuView = "cores";
+function coreTile(c, threads, hybrid) {
+  const hasT = c.temp != null && !threads, col = hasT ? tcol(c.temp) : lcol(c.load);
+  const tag = threads ? `T${c.idx}` : hybrid ? `${c.kind}${c.idx}` : `C${c.idx}`;
+  const sub = `${(c.mhz / 1000).toFixed(2)} GHz` + (!threads && c.volt != null ? ` · ${c.volt.toFixed(2)} V` : "");
+  return `<div class="core" style="--c:${col}"><span class="cn">${tag}</span><span class="cl">${f0(c.load)}%</span>
+    <div class="ct">${hasT ? f0(c.temp) + "°" : f0(c.load) + "%"}</div><div class="cf">${sub}</div>
     <div class="cb">${segbar(c.load)}</div></div>`;
 }
-function renderCpu(cpu, mem) {
+function renderCpu(t) {
+  const cpu = t.cpu;
   $("cpu-name").textContent = cpu.name.replace(/\(R\)|\(TM\)|CPU|@.*$/g, "").replace(/\s+/g, " ").trim();
-  $("die-lbl").textContent = `${cpu.cores.length} NÚCLEOS · ${(cpu.mhz_avg / 1000).toFixed(2)} GHz`;
-  const L = [], R = [];
-  cpu.cores.forEach((c, i) => (i % 2 ? R : L).push(coreTile(c)));
-  $("col-l").innerHTML = L.join(""); $("col-r").innerHTML = R.join("");
-  $("ring-lbl").textContent = `RING / L3 · ${(cpu.mhz_avg / 1000).toFixed(2)} GHz`;
-  const s = (l, v, col, sub) => `<div><div class="sl">${l}</div><div class="sv" ${col ? `style="color:${col}"` : ""}>${v}</div>${sub ? `<div class="ss">${sub}</div>` : ""}</div>`;
+  const physOk = cpu.phys && cpu.phys.length > 0;
+  const threads = cpuView === "threads" || !physOk;
+  document.querySelectorAll("#cpuview button").forEach((b) => b.classList.toggle("on", b.dataset.v === (threads ? "threads" : "cores")));
+  const list = threads ? cpu.cores : cpu.phys;
+  const hybrid = physOk && cpu.phys.some((c) => c.kind === "E");
+  $("die-lbl").textContent = `${physOk ? cpu.phys.length : cpu.cores.length} NÚCLEOS · ${cpu.threads || cpu.cores.length} THREADS`;
+  $("cores").style.setProperty("--cols", list.length <= 8 ? 2 : list.length <= 24 ? 4 : 6);
+  $("cores").innerHTML = list.map((c) => coreTile(c, threads, hybrid)).join("");
+  $("cpu-note").hidden = physOk || cpuView !== "cores";
+  $("cpu-note").textContent = "Os núcleos físicos aparecem quando os sensores completos estão ativos; mostrando threads.";
+  const need = needs(t);
+  const ghz = (m) => (m ? (m / 1000).toFixed(2) : "—");
+  const s = (l, v, col, sub) => `<div><div class="sl">${l}</div><div class="sv ${v === "—" ? "dim" : ""}" ${col && v !== "—" ? `style="color:${col}"` : ""}>${v}</div>${sub ? `<div class="ss">${esc(sub)}</div>` : ""}</div>`;
   $("cpu-side").innerHTML = [
     s("CARGA", f0(cpu.load) + " %", lcol(cpu.load)),
-    s("PACOTE", cpu.package_temp != null ? f0(cpu.package_temp) + " °C" : "—", tcol(cpu.package_temp), cpu.package_temp == null ? "precisa do HWiNFO" : ""),
-    s("CORE MAX", cpu.core_max != null ? f0(cpu.core_max) + " °C" : "—", tcol(cpu.core_max)),
-    s("POTÊNCIA", cpu.power != null ? f0(cpu.power) + " W" : "—"),
-    s("VCORE", cpu.vcore != null ? cpu.vcore.toFixed(3) + " V" : "—"),
-    s("RAM", `${gb(mem.used)} / ${gb(mem.total)} GB`, null, `${f0(mem.used / mem.total * 100)} % em uso`),
+    s("PACOTE", opt(cpu.package_temp, (v) => f0(v) + " °C"), tcol(cpu.package_temp), cpu.package_temp == null ? need : ""),
+    s("CORE MAX", opt(cpu.core_max, (v) => f0(v) + " °C"), tcol(cpu.core_max)),
+    s("POTÊNCIA", opt(cpu.power, (v) => v.toFixed(1) + " W"), null, cpu.cores_power != null ? `núcleos ${cpu.cores_power.toFixed(1)} W` : cpu.power == null ? need : ""),
+    s("VCORE", opt(cpu.vcore, (v) => v.toFixed(3) + " V"), css("--yellow"), cpu.vcore != null && cpu.vid != null ? `VID pedido ${cpu.vid.toFixed(3)} V` : ""),
+    s("CLOCK AGORA", `${ghz(cpu.mhz_min)}–${ghz(cpu.mhz_max)} GHz`, null, `sessão ${ghz(cpu.session_min)}–${ghz(cpu.session_max)} GHz`),
+    cpu.bus_mhz != null ? s("BARRAMENTO", cpu.bus_mhz.toFixed(1) + " MHz") : "",
   ].join("");
 }
 
-// ---------- GPU sprite ----------
-const MEMCHIPS = { top: ["M0", "M1"], l: ["M2", "M3"], r: ["M4", "M5"] };
-function renderGpu(g) {
-  const short = (g.name || "GPU").replace(/NVIDIA\s*/i, "");
+// ---------- GPU (compact) ----------
+function renderGpu(t) {
+  const g = t.gpu;
+  const short = (g.name || "GPU").replace(/NVIDIA\s*|AMD\s*/i, "");
   $("gpu-name").textContent = short;
-  $("gdie-name").textContent = /16[56]0/.test(short) ? "TU116" : /20[6-8]0/.test(short) ? "TU10x" : "GPU";
+  $("gpu-tag2").textContent = g.vram_total ? `${gb(g.vram_total)} GB` : "";
   $("gdie").style.setProperty("--c", tcol(g.temp));
   $("gdie-t").textContent = g.temp != null ? g.temp + "°" : "—";
   $("gdie-s").textContent = g.clock != null ? (g.clock / 1000).toFixed(2) + " GHz" : "—";
-  $("gdie-s2").textContent = `${f0(g.load)} % carga`;
   const used = g.vram_total ? g.vram_used / g.vram_total : 0;
-  const all = [...MEMCHIPS.top, ...MEMCHIPS.l, ...MEMCHIPS.r];
-  const chip = (n) => {
-    const fill = Math.max(0, Math.min(1, used * all.length - all.indexOf(n)));
-    const col = fill > 0 ? lcol(g.mem_load) : css("--dim");
-    return `<div class="chip" style="--c:${col};opacity:${0.4 + fill * 0.6}"><b>${n}</b><span>${f0(fill * 100)}%</span></div>`;
+  // one memory chip per 32 bits of bus width
+  const n = g.bus_width ? Math.max(1, Math.min(16, Math.round(g.bus_width / 32))) : 4, half = Math.ceil(n / 2);
+  const chip = (i) => {
+    const fill = Math.max(0, Math.min(1, used * n - i)), col = fill > 0 ? lcol(g.mem_load) : css("--dim");
+    return `<i class="mchip" style="--c:${col};--f:${Math.round(12 + fill * 35)}%"></i>`;
   };
-  $("mem-top").innerHTML = MEMCHIPS.top.map(chip).join("");
-  $("mem-l").innerHTML = MEMCHIPS.l.map(chip).join("");
-  $("mem-r").innerHTML = MEMCHIPS.r.map(chip).join("");
-  $("mem-cap").textContent = `GDDR6 · ${g.vram_used != null ? gb(g.vram_used) : "—"} / ${g.vram_total != null ? gb(g.vram_total) : "—"} GB · ${g.mem_clock != null ? g.mem_clock + " MHz" : "—"}`;
-  const pf = g.power_w && g.power_limit_w ? g.power_w / g.power_limit_w : 0, lit = Math.round(pf * 6);
-  let ch = "";
-  for (let i = 0; i < 6; i++) {
-    const on = i < lit, c = lcol(pf * 100);
-    ch += `<span class="ph2" style="${on ? `background:${c}` : ""}"></span><span class="ch2" style="${on ? `background:${c}44` : ""}"></span><span class="ph2" style="${on ? `background:${c}` : ""}"></span>`;
-  }
-  $("chokes").innerHTML = ch;
-  $("vrm-w").textContent = g.power_w != null ? f0(g.power_w) + " W" : "—";
-  $("pc-w").textContent = g.power_w != null ? f0(g.power_w) + " W" : "—";
-  $("pc-s").textContent = g.power_limit_w != null ? `limite ${f0(g.power_limit_w)} W` : "";
-  $("fan-lbl").textContent = g.fan != null ? `fan ${g.fan}%` : "fan —";
+  $("mem-top").innerHTML = [...Array(half)].map((_, i) => chip(i)).join("");
+  $("mem-bot").innerHTML = [...Array(n - half)].map((_, i) => chip(half + i)).join("");
+  $("g-use").textContent = g.load != null ? g.load + " %" : "—";
+  $("g-use").style.color = lcol(g.load);
+  $("g-bar").innerHTML = segbar(g.load, 20); $("g-bar").style.setProperty("--c", css("--green"));
+  $("g-vram").textContent = `VRAM ${g.vram_used != null ? gb(g.vram_used) : "—"} / ${g.vram_total != null ? gb(g.vram_total) : "—"} GB · ${n} chips${g.bus_width ? ` · ${g.bus_width}-bit` : ""}`;
+  $("fan-lbl").textContent = g.fan != null && g.fan_rpm != null ? `${g.fan}% · ${f0(g.fan_rpm)} rpm` : g.fan != null ? `${g.fan}%` : g.fan_rpm != null ? `${f0(g.fan_rpm)} rpm` : "fan —";
   $("fanblades").style.setProperty("--spd", g.fan ? (3.2 - g.fan / 100 * 2.9).toFixed(2) + "s" : "0s");
-  $("board-cap").textContent = g.error ? g.error : `${f0(g.power_w)} W de ${f0(g.power_limit_w)} W · ${f0(pf * 100)} % do limite de energia`;
-  $("gpu-tag2").textContent = g.vram_total ? `${gb(g.vram_total)} GB · NVML` : "";
+  const no = "sem sensor nesta placa", T = (v) => opt(v, (x) => f0(x) + " °C");
+  $("gpu-cells").innerHTML = [
+    cell("Temperatura", T(g.temp), tcol(g.temp)),
+    cell("Hotspot", T(g.hotspot), tcol(g.hotspot), g.hotspot == null ? needs(t) || no : ""),
+    cell("Memória", T(g.mem_temp), tcol(g.mem_temp), g.mem_temp == null ? no : ""),
+    cell("VRM", T(g.vrm_temp), tcol(g.vrm_temp), g.vrm_temp == null ? no : ""),
+    cell("Consumo", opt(g.power_w, (v) => f0(v) + " W"), null, g.power_limit_w != null ? `limite ${f0(g.power_limit_w)} W` : ""),
+    cell("Tensão", opt(g.voltage, (v) => v.toFixed(3) + " V"), css("--yellow"), g.voltage == null ? needs(t) : ""),
+    cell("Clock memória", g.mem_clock != null ? g.mem_clock + " MHz" : "—", null, g.mem_load != null ? `controlador ${g.mem_load}%` : ""),
+    cell("VRAM", g.vram_used != null ? gb(g.vram_used) + " GB" : "—", null, `${f0(used * 100)}% de ${g.vram_total != null ? gb(g.vram_total) : "—"} GB`),
+  ].join("");
+  $("gpu-err").hidden = !g.error; $("gpu-err").textContent = g.error || "";
 }
+
+// ---------- RAM ----------
+const RAMTYPE = { 34: "DDR5", 26: "DDR4", 24: "DDR3", 30: "LPDDR4", 35: "LPDDR5" };
+const cyc = (ns, mts) => (ns == null || !mts ? null : Math.max(1, Math.ceil(ns / (2000 / mts) - 0.025)));
+let ramLayout = null;
+function renderRam(t) {
+  const mem = t.mem, p = mem.total ? mem.used / mem.total * 100 : 0;
+  const mods = pcInfo?.ram || [], m0 = mods[0];
+  const mts = m0 ? m0.configured || m0.speed : 0, kind = (m0 && RAMTYPE[m0.kind]) || "RAM";
+  const spd = (t.hw.spd || [])[0];
+  const cl = cyc(spd?.taa, mts), tm = [cl, cyc(spd?.trcd, mts), cyc(spd?.trp, mts), cyc(spd?.tras, mts)];
+  const volt = m0 && m0.mv ? m0.mv / 1000 : t.hw.board?.dram_v;
+  const temps = (t.hw.spd || []).map((s) => s.temp).filter((v) => v != null), temp = temps.length ? Math.max(...temps) : null;
+  $("ram-tag").textContent = `${kind} · ${gb(mem.total)} GB`;
+  $("ram-pct").textContent = f0(p) + "%"; $("ram-pct").style.color = lcol(p);
+  $("ram-sub").textContent = `${gb(mem.used)} de ${gb(mem.total)} GB em uso · virtual ${gb(mem.swap_used)} / ${gb(mem.swap_total)} GB`;
+  $("ram-bar").innerHTML = segbar(p, 30); $("ram-bar").style.setProperty("--c", css("--amber"));
+  const slots = pcInfo?.ram_slots || 0;
+  $("ram-cells").innerHTML = [
+    cell("Frequência", mts ? `${mts} MT/s` : "—", null, mts ? `${Math.round(mts / 2)} MHz reais · ${kind}` : ""),
+    cell("Latência", cl ? `CL${cl}` : "—", css("--cyan"), tm.every((x) => x) ? `${tm.join("-")} · ${(cl * 2000 / mts).toFixed(2)} ns` : needs(t)),
+    cell("Tensão", opt(volt, (v) => v.toFixed(2) + " V"), css("--yellow")),
+    cell("Temperatura", opt(temp, (v) => f0(v) + " °C"), tcol(temp), temp == null ? "o pente não tem sensor" : ""),
+    cell("Consumo", opt(t.cpu.mem_power, (v) => v.toFixed(1) + " W"), null, t.cpu.mem_power != null ? "controlador de memória" : ""),
+    cell("Canais", ramLayout ? ramLayout.mode.replace(" channel", "") : "—", null, `${mods.length} de ${Math.max(slots, mods.length)} slots`),
+  ].join("");
+  $("ram-mods").innerHTML = mods.map((m, i) => {
+    const s = (t.hw.spd || [])[i], rfc = cyc(s?.trfc, mts);
+    const sp = m.configured || m.speed;
+    return `<div class="row"><span class="k">${esc(m.slot)} · ${f0(m.size_gb)} GB ${esc(m.part)}</span><span class="v">${sp} MT/s${m.speed > m.configured && m.configured ? ` (suporta ${m.speed})` : ""}${rfc ? ` · tRFC ${rfc}` : ""}</span></div>`;
+  }).join("");
+}
+
+// ---------- motherboard ----------
+function renderBoard(t) {
+  const b = t.hw.board || {}, fans = t.hw.fans || [];
+  if (!pcInfo) return;
+  $("board-name").textContent = `Placa-mãe · ${pcInfo.board_maker} ${pcInfo.board}`;
+  $("board-chip").textContent = b.chip || "chip de sensores não lido";
+  $("slots").innerHTML = (ramLayout?.slots || []).map((s) => `<div class="slot ${s.module ? "on" : ""}"><i></i>${esc(s.name)}<small>${s.module ? f0(s.module.size_gb) + " GB" : "vazio"}</small></div>`).join("");
+  const inUse = fans.filter((f) => f.rpm > 0).length;
+  $("hdr-lbl").textContent = `CONECTORES DE FAN · ${inUse} DE ${b.headers || 0} EM USO`;
+  $("hdrs").innerHTML = fans.length
+    ? fans.map((f, i) => `<div class="hdr ${f.rpm > 0 ? "on" : ""}"><i><b></b><b></b><b></b><b></b></i>${/^Fan #/.test(f.label) ? "F" + (i + 1) : esc(f.label)}<span>${f.rpm > 0 ? f0(f.rpm) : "—"}</span></div>`).join("")
+    : `<div class="empty">sem leitura do chip da placa</div>`;
+  $("rgb").innerHTML = pcInfo.rgb_devices?.length
+    ? `<div class="chips">${pcInfo.rgb_devices.map((d) => `<span class="rgbdev">${esc(d)}</span>`).join("")}</div>`
+    : `<div class="empty" style="padding:0">nenhum controlador RGB por USB encontrado</div>`;
+  const T = (v) => opt(v, (x) => f0(x) + " °C"), no = "a placa não tem esse sensor";
+  const measured = (t.cpu.power || 0) + (t.gpu.power_w || 0);
+  $("board-cells").innerHTML = [
+    cell("VRM da CPU", T(b.vrm), tcol(b.vrm), b.vrm == null ? needs(t) || no : ""),
+    cell("VRM da memória", T(b.vrm_mem), tcol(b.vrm_mem), b.vrm_mem == null ? needs(t) || no : ""),
+    cell("Chipset", T(b.pch), tcol(b.pch), b.pch == null ? no : ""),
+    cell("Consumo da placa", opt(b.power, (v) => f0(v) + " W"), null, b.power != null ? "sensor da placa" : measured ? `sem sensor · CPU+GPU medidos ${f0(measured)} W` : "sem sensor"),
+  ].join("");
+  const nt = (b.temps || []).filter((x) => !/^Temperature #/.test(x.label)), nv = (b.volts || []).filter((x) => !/^Voltage #/.test(x.label));
+  $("board-chips").innerHTML = [...nt.map((x) => `<span><em>${esc(x.label)}</em>${f0(x.value)} °C</span>`), ...nv.map((x) => `<span><em>${esc(x.label)}</em>${x.value.toFixed(3)} V</span>`)].join("");
+  const unnamed = (b.temps || []).length - nt.length + (b.volts || []).length - nv.length;
+  $("board-note").textContent = unnamed > 0 ? `+${unnamed} leituras sem nome no chip (esta placa não identifica os canais)` : "";
+}
+
+// ---------- fans ----------
+function renderFans(t) {
+  const fans = t.hw.fans || [], g = t.gpu;
+  const inUse = fans.filter((f) => f.rpm > 0).length, gpuFan = g.fan != null || g.fan_rpm != null, total = inUse + (gpuFan ? 1 : 0);
+  $("fans-tag").textContent = fans.length ? `${total} girando · ${fans.length} conectores` : "sem leitura";
+  $("fan-count").textContent = total;
+  $("fan-count-l").textContent = total === 1 ? "ventoinha detectada" : "ventoinhas detectadas";
+  const r = fans.map((f) => {
+    const on = f.rpm > 0, pc = f.pct ?? 0, n = Math.round(Math.min(100, pc) / 10);
+    return `<div class="row"><i class="fan-dot ${on ? "on" : ""}"></i><span class="k" style="${on ? "" : "color:var(--dim)"}">${esc(f.label)}</span>
+      <span class="fanbar" style="--c:${on ? css("--cyan") : css("--dim")}">${[...Array(10)].map((_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</span>
+      <span class="v" style="width:120px;text-align:right">${on ? `${f0(f.rpm)} rpm · ${f.pct != null ? f0(f.pct) + "%" : "—"}` : "desconectado"}</span></div>`;
+  });
+  if (gpuFan) r.push(`<div class="row"><i class="fan-dot on"></i><span class="k">GPU</span><span class="v">${g.fan_rpm != null ? f0(g.fan_rpm) + " rpm · " : ""}${g.fan != null ? g.fan + "%" : ""}</span></div>`);
+  $("fans").innerHTML = r.join("");
+  $("fans-note").textContent = fans.length ? "Ventoinhas ligadas em hub/controladora aparecem como uma só no conector." : "Ative os sensores completos (PawnIO + administrador) para ler as ventoinhas da placa-mãe.";
+}
+
+// ---------- sensors banner ----------
+let sensAction = null;
+function renderSensors(t) {
+  let msg = "", act = null;
+  if ((t.lhm_state === "running" || t.lhm_state === "off") && t.pawnio) msg = "";
+  else if (t.lhm_state === "starting" || t.lhm_state === "installing") msg = t.lhm_msg;
+  else if (!t.pawnio) { msg = "Sensores limitados: falta o driver PawnIO para ler CPU (potência, Vcore), ventoinhas e placa-mãe."; act = ["Instalar PawnIO", "install"]; }
+  else if (t.lhm_state === "limited") { msg = "Rodando sem administrador: GPU e discos funcionam, mas CPU, ventoinhas e placa-mãe precisam da permissão (UAC)."; act = ["Tentar com administrador", "admin"]; }
+  else { msg = "Sensores: " + t.lhm_msg; act = ["Tentar de novo", "admin"]; }
+  $("sensbar").hidden = !msg;
+  $("sens-msg").textContent = msg;
+  $("sens-act").hidden = !act;
+  if (act) { $("sens-act").textContent = act[0]; sensAction = act[1]; }
+  $("sens-state").textContent = `Estado: ${t.lhm_msg} · driver PawnIO ${t.pawnio ? "instalado" : "não instalado"}`;
+}
+$("sens-act").onclick = () => (sensAction === "install" ? invoke("sensors_install") : invoke("sensors_start", { admin: true }));
+$("sens-restart").onclick = () => { invoke("sensors_start", { admin: $("c-admin").checked }); $("save-msg").textContent = "reiniciando sensores…"; };
+document.querySelectorAll("#cpuview button").forEach((b) => b.addEventListener("click", () => {
+  cpuView = b.dataset.v;
+  if (cfg) { cfg.cpu_view = cpuView; invoke("save_config", { cfg }); }
+  if (lastT) renderCpu(lastT);
+}));
 
 // ---------- PC identity ----------
 const JEDEC = { "80CE": "Samsung", "CE00": "Samsung", "802C": "Micron", "2C00": "Micron", "80AD": "SK hynix", "AD00": "SK hynix", "859B": "Crucial", "04CD": "G.Skill", "029E": "Corsair", "0198": "Kingston", "9801": "Kingston", "04F1": "Teamgroup", "0783": "Transcend", "8551": "Qimonda", "017A": "ADATA", "04CB": "ADATA" };
@@ -134,6 +257,7 @@ function ramMaker(m) {
 let pcInfo = null;
 function renderPc(pc) {
   pcInfo = pc;
+  invoke("ram_layout").then((l) => { if (l) ramLayout = l; });
   if (!pc || pc.error) { $("pc-spec").innerHTML = `<div class="empty">${esc(pc?.error || "indisponível")}</div>`; $("pc-tag").textContent = "—"; return; }
   const generic = /^(to be filled|system manufacturer|default string|intel|)$/i.test(pc.maker.trim()) || pc.model === pc.board;
   const name = generic ? "PC montado" : `${pc.maker} ${pc.model}`;
@@ -205,13 +329,15 @@ function renderCooling(c, cpu) {
     ? "Water cooler: a bomba precisa estar sempre girando. Se a rotação cair a zero a CPU esquenta em segundos. Verifique o nível de ruído da bomba e limpe o radiador a cada 6 meses."
     : c.kind === "air"
       ? "Air cooler: limpe a poeira das aletas a cada 3–6 meses. CPU acima de 85 °C em carga costuma indicar pasta térmica velha ou ventoinha fraca."
-      : "Abra o HWiNFO (Shared Memory) para o app ler as ventoinhas e a bomba, ou escolha o tipo em Configurações.";
+      : "Ative os sensores completos (aviso no topo) para o app ler as ventoinhas e a bomba, ou escolha o tipo em Configurações.";
 }
 
 function rows(el, items, empty) { $(el).innerHTML = items.length ? items.join("") : `<div class="empty">${empty}</div>`; }
 
-let rateMs = 1000;
+let rateMs = 1000, lastT = null;
 function render(t) {
+  lastT = t;
+  t.hw = t.hw || { board: {}, fans: [], spd: [], drives: [] };
   const { cpu, gpu, mem, net } = t;
   const memPct = mem.total ? (mem.used / mem.total) * 100 : null;
   push("cpu", cpu.load); push("gpu", gpu.load); push("mem", memPct); push("net", net.rx_bps);
@@ -220,8 +346,10 @@ function render(t) {
   $("host").textContent = t.host || "PC";
   $("uptime").textContent = uptime(t.uptime);
   const src = (n, ok, msg) => `<b>${n}</b> <span class="${ok ? "ok" : "off"}">${ok ? "●" : "○"}</span> ${msg}`;
-  $("status").innerHTML = [src("Windows", true, "carga · clocks · RAM · discos · rede"), src("NVML", !gpu.error, gpu.error ? "offline" : "GPU"),
-    src("HWiNFO", !t.hwinfo, t.hwinfo ? "offline — abra para ver temperaturas da CPU e ventoinhas" : "temperaturas · potência · fans")].join("  ·  ");
+  const sens = { running: "CPU · placa-mãe · ventoinhas · RAM · GPU", limited: "limitado (sem administrador)", starting: "iniciando…", installing: "instalando PawnIO…" }[t.lhm_state] || "desligado";
+  $("status").innerHTML = [src("Windows", true, "carga · clocks · RAM · discos · rede"), src("NVML", !gpu.error, gpu.error ? "sem GPU NVIDIA" : "GPU"),
+    src("Sensores", t.lhm_state === "running", sens), ...(t.hwinfo ? [] : [src("HWiNFO", true, t.source === "hwinfo" ? "em uso" : "disponível")])].join("  ·  ");
+  renderSensors(t);
 
   // alerts
   const keys = new Set(t.alerts.map((a) => a.key));
@@ -236,7 +364,7 @@ function render(t) {
 
   // vitals
   $("cpu-load").textContent = f0(cpu.load);
-  $("cpu-sub").textContent = `${(cpu.mhz_avg / 1000).toFixed(2)} GHz · ${cpu.cores.length} núcleos` + (cpu.package_temp != null ? ` · ${f0(cpu.package_temp)} °C` : "");
+  $("cpu-sub").textContent = `${(cpu.mhz_avg / 1000).toFixed(2)} GHz · ${cpu.phys?.length || cpu.cores.length} núcleos` + (cpu.package_temp != null ? ` · ${f0(cpu.package_temp)} °C` : "");
   $("gpu-load").textContent = f0(gpu.load);
   $("gpu-sub").textContent = `${gpu.temp ?? "—"} °C · ${f0(gpu.power_w)} W · ${gpu.clock ?? "—"} MHz`;
   $("mem-pct").textContent = f0(memPct);
@@ -250,8 +378,11 @@ function render(t) {
   bars("sp-net", hist.net, css("--cyan"));
 
   // sprites
-  renderCpu(cpu, mem);
-  renderGpu(gpu);
+  renderCpu(t);
+  renderGpu(t);
+  renderRam(t);
+  renderBoard(t);
+  renderFans(t);
   renderCooling(t.cooling, cpu);
 
   // thermals
@@ -271,13 +402,12 @@ function render(t) {
     const col = keys.has("disk:" + d.mount) || p > 90 ? css("--red") : p > 75 ? css("--orange") : css("--amber");
     return `<div class="row"><div class="stack"><div style="display:flex;gap:8px"><span class="k"><b>${esc(d.mount)}</b> ${esc(d.name || d.kind)} <small style="color:var(--dim)">${esc(d.kind)}</small></span><span class="v">${gb(d.used)} / ${gb(d.total)} GB · ${f0(p)}%</span></div><div class="seg10" style="--c:${col}">${segbar(p, 20)}</div></div></div>`;
   }), "nenhum disco");
+  const drv = t.hw.drives || [];
+  $("drv-lbl").hidden = !drv.length;
+  $("drives").innerHTML = drv.map((d) => `<div class="row"><span class="k">${esc(d.name)}</span><span class="v">${[d.temp != null ? f0(d.temp) + " °C" : "", d.life != null ? `vida ${f0(d.life)}%` : "", d.hours != null ? `${f0(d.hours)} h ligado` : ""].filter(Boolean).join(" · ")}</span></div>`).join("");
 
   // processes + fans
   rows("procs", t.procs.map((p) => `<div class="row"><span class="k">${esc(p.name)}</span><span class="v">${f1(p.cpu)} % · ${(p.mem / 1048576).toFixed(0)} MB</span></div>`), "—");
-  $("fans-tag").textContent = t.hwinfo ? "HWiNFO offline" : "HWiNFO";
-  const fanRows = t.fans.map((f) => `<div class="row"><span class="k">${esc(f.label)}</span><span class="v">${f0(f.rpm)} rpm</span></div>`);
-  if (gpu.fan != null) fanRows.unshift(`<div class="row"><span class="k">GPU</span><span class="v">${gpu.fan} %</span></div>`);
-  rows("fans", fanRows, "Abra o HWiNFO para ver as ventoinhas da placa-mãe.");
 }
 
 // ---------- controls ----------
@@ -296,6 +426,7 @@ function fillSettings() {
   for (const [k, id] of Object.entries(F)) $(id).checked = !!cfg[k];
   for (const [k, id] of Object.entries(N)) $(id).value = cfg[k];
   $("c-cooling").value = cfg.cooling || "auto";
+  $("c-admin").checked = cfg.sensors_admin !== false;
 }
 $("open-settings").onclick = () => { fillSettings(); $("save-msg").textContent = ""; $("settings").hidden = false; };
 $("close-settings").onclick = () => ($("settings").hidden = true);
@@ -307,22 +438,26 @@ $("save-settings").onclick = async () => {
   for (const [k, id] of Object.entries(F)) next[k] = $(id).checked;
   for (const [k, id] of Object.entries(N)) next[k] = Math.max(0, Number($(id).value) || 0);
   next.cooling = $("c-cooling").value;
+  next.sensors_admin = $("c-admin").checked;
+  next.cpu_view = cpuView;
   next.interval_ms = rateMs;
   try { cfg = (await invoke("save_config", { cfg: next })) || next; $("save-msg").textContent = "salvo ✓"; setTimeout(() => ($("settings").hidden = true), 600); }
   catch (e) { $("save-msg").style.color = "var(--red)"; $("save-msg").textContent = String(e); }
 };
 
 if (TAURI) {
-  invoke("get_config").then((c) => { cfg = c; setRate(c.interval_ms, false); });
+  invoke("get_config").then((c) => { cfg = c; cpuView = c.cpu_view || "cores"; setRate(c.interval_ms, false); });
   invoke("get_pcinfo").then((p) => p && renderPc(p));
   TAURI.event.listen("pcinfo", (e) => renderPc(e.payload));
   TAURI.event.listen("telemetry", (e) => render(e.payload));
 } else {
   // Browser preview with fake data.
   cfg = { alerts_enabled: true, notify: true, cpu_temp: 85, gpu_temp: 83, ram_pct: 90, disk_pct: 95, hold_s: 5, cooldown_min: 5, close_to_tray: true, interval_ms: 1000, cooling: "auto" };
-  renderPc({ maker: "INTEL", model: "H310", board_maker: "INTEL", board: "H310", bios: "American Megatrends Inc. 5.13", os: "Microsoft Windows 11 Pro", os_build: "10.0.26300 build 26300",
+  ramLayout = { mode: "Dual channel", slots: [{ name: "A0", module: { size_gb: 16 } }, { name: "A1", module: null }, { name: "B0", module: { size_gb: 16 } }, { name: "B1", module: null }] };
+  renderPc({ maker: "DEMO", model: "Desktop", board_maker: "DEMO", board: "B550M", bios: "American Megatrends Inc. 5.13", os: "Microsoft Windows 11 Pro", os_build: "10.0.26300 build 26300",
     cpu: "Intel(R) Core(TM) i7-9700 CPU @ 3.00GHz", cpu_cores: 8, cpu_threads: 8, cpu_max_mhz: 3000, cpu_l3_kb: 12288, cpu_socket: "U3E1", gpus: ["NVIDIA GeForce GTX 1660 SUPER"], gpu_driver: "32.0.16.2114",
-    ram: [{ slot: "ChannelB-DIMM0", size_gb: 16, speed: 2667, maker: "8054", part: "7EH65AA#" }],
+    ram: [{ slot: "ChannelA-DIMM0", size_gb: 16, speed: 3600, configured: 3200, mv: 1350, kind: 26, maker: "04CD", part: "F4-3600C18-16GVK" }, { slot: "ChannelB-DIMM0", size_gb: 16, speed: 3600, configured: 3200, mv: 1350, kind: 26, maker: "04CD", part: "F4-3600C18-16GVK" }],
+    ram_slots: 4, ram_max_gb: 64, rgb_devices: ["AURA LED Controller"], board_version: "Rev 1.xx",
     disks: [{ model: "ST2000LM007-1R8174", size_gb: 1863, media: "HDD", bus: "SATA" }, { model: "SSD 240GB", size_gb: 224, media: "SSD", bus: "SATA" }, { model: "ATA TOSHIBA MQ01ABD0", size_gb: 466, media: "Unspecified", bus: "USB" }],
     cooling_devices: [] });
   let k = 0;
@@ -335,15 +470,22 @@ if (TAURI) {
       alerts: ct > 85 ? [{ key: "cpu_temp", title: "CPU quente", value: ct, limit: 85, unit: "°C" }] : [],
       cooling: water ? { kind: "water", confidence: "high", reason: "bomba detectada em “W_PUMP+” (2100 rpm)", pump_rpm: 2100, cpu_fan_rpm: 1100 }
         : { kind: "air", confidence: "medium", reason: "ventoinha da CPU em “CPU” (1100 rpm) e nenhuma bomba", pump_rpm: null, cpu_fan_rpm: 1100 },
-      cpu: { name: "Intel(R) Core(TM) i7-9700 CPU @ 3.00GHz", load: 10 + w(60, 7), mhz_avg: 4300, package_temp: ct, core_max: ct + 4, power: 20 + w(60, 9), vcore: 1.2,
-        cores: [...Array(8)].map((_, i) => ({ idx: i, load: 5 + w(90, 3 + i), mhz: 4500 - i * 30, temp: 38 + w(40, 4 + i) })) },
+      lhm_state: "running", lhm_msg: "ativo", pawnio: true, source: "lhm",
+      cpu: { name: "Intel(R) Core(TM) i7-9700 CPU @ 3.00GHz", load: 10 + w(60, 7), mhz_avg: 4300, package_temp: ct, core_max: ct + 4, power: 20 + w(60, 9), cores_power: 15 + w(50, 9), vcore: 1.25, vid: 1.28, bus_mhz: 100,
+        mhz_min: 4200, mhz_max: 4700, session_min: 800, session_max: 4700, threads: 8, mem_power: 1.4,
+        phys: [...Array(8)].map((_, i) => ({ idx: i, kind: "P", load: 5 + w(90, 3 + i), mhz: 4500 - i * 30, temp: 38 + w(40, 4 + i), volt: 1.2 + i * 0.01 })),
+        cores: [...Array(8)].map((_, i) => ({ idx: i, kind: "", load: 5 + w(90, 3 + i), mhz: 4500 - i * 30, temp: null, volt: null })) },
       gpu: { name: "NVIDIA GeForce GTX 1660 SUPER", temp: Math.round(45 + w(30, 11)), load: Math.round(w(100, 6)), mem_load: Math.round(w(60, 6)), vram_used: 2.5e9 + w(3e9, 13), vram_total: 6.4e9,
-        power_w: 15 + w(110, 6), power_limit_w: 125, clock: 1530 + Math.round(w(400, 6)), mem_clock: 7000, fan: Math.round(30 + w(50, 11)) },
+        power_w: 15 + w(110, 6), power_limit_w: 125, clock: 1530 + Math.round(w(400, 6)), mem_clock: 7000, fan: Math.round(30 + w(50, 11)), fan_rpm: 1400,
+        hotspot: 55 + w(30, 11), mem_temp: null, vrm_temp: null, voltage: 0.9, bus_width: 192 },
       mem: { used: 8.6e9 + w(2e9, 10), total: 17.1e9, swap_used: 1e9, swap_total: 4e9 },
       disks: [{ name: "SSD 240GB", mount: "C:", kind: "SSD", used: 2.1e11, total: 2.4e11 }, { name: "ST2000LM007", mount: "D:", kind: "HDD", used: 1.2e12, total: 2e12 }],
       net: { rx_bps: w(5e6, 4), tx_bps: w(4e5, 5) },
       procs: [{ name: "VRChat", cpu: 22.4, mem: 3.2e9 }, { name: "chrome", cpu: 6.1, mem: 1.1e9 }, { name: "Discord", cpu: 1.2, mem: 4e8 }],
       fans: [{ label: "CPU", rpm: 1100 }, { label: "Chassis1", rpm: 870 }],
+      hw: { board: { chip: "Nuvoton NCT6798D", headers: 6, vrm: 48 + w(10, 8), vrm_mem: null, pch: 44, dram_v: 1.35, power: null, temps: [{ label: "System", value: 32 }], volts: [{ label: "Vcore", value: 1.25 }, { label: "+12V", value: 12.1 }] },
+        fans: [{ label: "CPU Fan", rpm: 1100, pct: 55 }, { label: "Pump", rpm: 0, pct: 100 }, { label: "System Fan #1", rpm: 870, pct: 40 }, { label: "System Fan #2", rpm: 0, pct: 40 }, { label: "System Fan #3", rpm: 0, pct: 40 }, { label: "AIO Pump", rpm: 0, pct: 100 }],
+        spd: [{ taa: 11.25, trcd: 11.25, trp: 11.25, tras: 26.25, trfc: 350, temp: null }], drives: [{ name: "Samsung SSD 970", temp: 41, life: 98, hours: 1200 }] },
     });
   }, 1000);
 }

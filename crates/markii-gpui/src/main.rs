@@ -2,6 +2,7 @@
 //! Mark II — native GPUI front end.
 
 mod draw;
+mod panels;
 mod theme;
 mod view;
 

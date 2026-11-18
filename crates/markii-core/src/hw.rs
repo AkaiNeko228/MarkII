@@ -50,6 +50,10 @@ pub struct Cpu {
     pub ring_clock: Option<f64>,
     pub cores: Vec<Core>,
     pub dimms: Vec<Dimm>,
+    /// Voltage the CPU itself reports (VID / SVI telemetry).
+    pub vid: Option<f64>,
+    pub bus: Option<f64>,
+    pub mem_power: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
@@ -72,12 +76,63 @@ pub struct Gpu {
     pub core_power: Option<f64>,
     pub mem_power: Option<f64>,
     pub chips: BTreeMap<String, Option<f64>>,
+    pub vrm: Option<f64>,
+    pub fan_rpm: Option<f64>,
+    pub fan_pct: Option<f64>,
+    pub vram_used_mb: Option<f64>,
+    pub vram_total_mb: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
 pub struct Fan {
     pub label: String,
     pub rpm: f64,
+    /// PWM / DC duty the header is driven at, when known.
+    pub pct: Option<f64>,
+}
+
+#[derive(Serialize, Clone, Default, Debug)]
+pub struct Named {
+    pub label: String,
+    pub value: f64,
+}
+
+/// Motherboard sensor chip (Super I/O / EC) readings.
+#[derive(Serialize, Clone, Default, Debug)]
+pub struct Board {
+    pub chip: String,
+    pub temps: Vec<Named>,
+    pub volts: Vec<Named>,
+    /// Number of fan headers the chip exposes.
+    pub headers: usize,
+    pub vrm: Option<f64>,
+    pub vrm_mem: Option<f64>,
+    pub pch: Option<f64>,
+    pub dram_v: Option<f64>,
+    pub power: Option<f64>,
+}
+
+/// One memory module as read from its SPD chip (times in ns).
+#[derive(Serialize, Clone, Default, Debug)]
+pub struct Spd {
+    pub name: String,
+    pub capacity_gb: Option<f64>,
+    pub tck_min: Option<f64>,
+    pub taa: Option<f64>,
+    pub trcd: Option<f64>,
+    pub trp: Option<f64>,
+    pub tras: Option<f64>,
+    pub trc: Option<f64>,
+    pub trfc: Option<f64>,
+    pub temp: Option<f64>,
+}
+
+#[derive(Serialize, Clone, Default, Debug)]
+pub struct Drive {
+    pub name: String,
+    pub temp: Option<f64>,
+    pub life: Option<f64>,
+    pub hours: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
@@ -85,6 +140,9 @@ pub struct HwSnapshot {
     pub cpu: Cpu,
     pub gpu: Gpu,
     pub fans: Vec<Fan>,
+    pub board: Board,
+    pub spd: Vec<Spd>,
+    pub drives: Vec<Drive>,
 }
 
 struct Finder<'a> {
@@ -194,6 +252,7 @@ pub fn map(r: &[Reading], ov: &HashMap<String, String>) -> HwSnapshot {
         .map(|rd| Fan {
             label: if rd.label_user.is_empty() { rd.label.clone() } else { rd.label_user.clone() },
             rpm: rd.value,
+            pct: None,
         })
         .collect();
 
@@ -218,6 +277,9 @@ pub fn map(r: &[Reading], ov: &HashMap<String, String>) -> HwSnapshot {
             ring_clock: f.get("cpu.ring_clock", CLOCK, c, &["Ring/LLC Clock", "Uncore Clock"]),
             cores: cores.into_values().collect(),
             dimms: dimms.into_values().collect(),
+            vid: None,
+            bus: None,
+            mem_power: f.get("cpu.mem_power", POWER, c, &["DRAM Power"]),
         },
         gpu: Gpu {
             name: device_name(r, "GPU [#0]"),
@@ -237,7 +299,16 @@ pub fn map(r: &[Reading], ov: &HashMap<String, String>) -> HwSnapshot {
             core_power: f.get("gpu.core_power", POWER, g, &["GPU Core (NVVDD) Input Power (sum)", "GPU Core (NVVDD) Input Power", "NVVDD"]),
             mem_power: f.get("gpu.mem_power", POWER, g, &["GPU FBVDD Input Power", "FBVDD"]),
             chips,
+            vrm: f.get("gpu.vrm", TEMP, g, &["GPU VRM Temperature", "VRM"]),
+            ..Default::default()
+        },
+        board: Board {
+            vrm: f.get("board.vrm", TEMP, "", &["VRM MOS", "VRM", "MOS"]),
+            pch: f.get("board.pch", TEMP, "", &["PCH", "Chipset"]),
+            dram_v: f.get("board.dram_v", VOLT, "", &["DRAM", "VDIMM"]),
+            ..Default::default()
         },
         fans,
+        ..Default::default()
     }
 }
