@@ -25,8 +25,10 @@ pub struct Config {
     pub cooling: String,
     /// Start the elevated LibreHardwareMonitor helper (fans, voltages, power, board).
     pub sensors_admin: bool,
-    /// CPU panel view: "cores" | "threads"
+    /// CPU panel view: "cores" | "threads" | "both"
     pub cpu_view: String,
+    /// "grafite" (default) | "roxo" | "lavanda" | "menta" (dark pastel) | "algodao" | "pistache" (light pastel)
+    pub theme: String,
 }
 
 impl Default for Config {
@@ -45,6 +47,7 @@ impl Default for Config {
             cooling: "auto".into(),
             sensors_admin: true,
             cpu_view: "cores".into(),
+            theme: "grafite".into(),
         }
     }
 }

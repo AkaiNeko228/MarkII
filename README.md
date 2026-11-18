@@ -79,7 +79,7 @@ crates/markii-gpui/   app nativo GPUI
   view.rs             layout, cabeçalho, Este PC, refrigeração, temperaturas, configurações
   panels.rs           CPU (núcleos/threads), GPU, memória, placa-mãe, ventoinhas, aviso de sensores
   draw.rs             gráficos e sprites desenhados (barras, linhas, ventoinhas, coolers)
-  theme.rs            paleta grafite + âmbar
+  theme.rs            temas (grafite, roxo, pastel escuros e claros) e troca de cores
   main.rs             janela, bandeja, notificações, thread de coleta
 sensors/              auxiliar .NET com LibreHardwareMonitorLib (roda com admin)
 src-tauri/ + ui/      versão Tauri (interface web), usa o mesmo markii-core
@@ -108,6 +108,10 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - Logo da marca nos painéis: CPU (Intel/AMD, com a geração ou série), GPU (NVIDIA, AMD Radeon, Intel Arc), placa-mãe (ASUS, ROG, MSI, Gigabyte...) e cada pente de RAM (Kingston, Corsair, G.Skill, HP...). Marcas sem logo livre aparecem como um selo de texto.
 - CPU: terceira opção "Ambos" mostra cada núcleo com a carga das suas threads.
 - Logos: [Simple Icons](https://simpleicons.org) (CC0). As marcas pertencem aos seus donos e só identificam o hardware.
+
+## v0.5.1
+
+- Temas: **Grafite** (padrão), **Roxo** (preto com roxo escuro), **Lavanda** e **Menta** (pastel escuros), **Algodão-doce** e **Pistache** (pastel claros). Escolha em Configurações → Tema; muda na hora e fica salvo.
 
 ## Próximos sprints
 

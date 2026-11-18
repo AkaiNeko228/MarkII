@@ -681,6 +681,60 @@ impl Dashboard {
                 .child(l.to_string())
         };
         let h3 = |t: &str| label(t).mt(px(16.)).mb(px(8.));
+        let cur_theme = theme().key;
+        let theme_opt = |i: usize| {
+            let th = &THEMES[i];
+            let on = th.key == cur_theme;
+            let key = th.key;
+            // swatches use the theme's own colors, not the active theme
+            div()
+                .id(SharedString::from(format!("theme-{key}")))
+                .flex_1()
+                .min_w_0()
+                .rounded(px(5.))
+                .border_1()
+                .border_color(if on { c(AMBER) } else { c(LINE2) })
+                .p(px(3.))
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    set_theme(key);
+                    if let Some(s) = this.settings.as_mut() {
+                        s.theme = key.into();
+                    }
+                    let mut c0 = this.cfg.lock().unwrap();
+                    c0.theme = key.into();
+                    let _ = c0.save(&this.cfg_path);
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .rounded(px(3.))
+                        .bg(gpui::rgb(th.grey[0]))
+                        .p(px(6.))
+                        .child(
+                            div()
+                                .rounded(px(2.))
+                                .bg(gpui::rgb(th.grey[1]))
+                                .border_1()
+                                .border_color(gpui::rgb(th.grey[3]))
+                                .p(px(5.))
+                                .child(div().h(px(4.)).w(px(34.)).rounded(px(1.)).bg(gpui::rgb(th.grey[7])))
+                                .child(div().flex().gap(px(3.)).mt(px(5.)).children([0usize, 1, 2, 3].map(|k| div().size(px(9.)).rounded(px(5.)).bg(gpui::rgb(th.accent[k]))))),
+                        ),
+                )
+                .child(
+                    div()
+                        .pt(px(4.))
+                        .flex()
+                        .justify_center()
+                        .text_size(px(11.))
+                        .text_color(c(if on { TEXT } else { MUTED }))
+                        .flex_col()
+                        .items_center()
+                        .child(th.name)
+                        .child(div().text_size(px(9.5)).text_color(c(DIM)).child(if i == 0 { "padrão" } else if th.light { "claro" } else { "escuro" })),
+                )
+        };
         let btn = |id: &'static str, txt: &str, primary: bool| {
             div()
                 .id(id)
@@ -755,6 +809,8 @@ impl Dashboard {
                             .child(stepper("hold", "Por pelo menos", s.hold_s.to_string(), "s", |s, d| s.hold_s = (s.hold_s as i64 + d as i64).clamp(0, 600) as u64))
                             .child(stepper("cool", "Repetir a cada", s.cooldown_min.to_string(), "min", |s, d| s.cooldown_min = (s.cooldown_min as i64 + d as i64).clamp(1, 240) as u64)),
                     )
+                    .child(h3("Tema"))
+                    .child(div().flex().gap(px(6.)).children((0..THEMES.len()).map(theme_opt)))
                     .child(h3("Refrigeração"))
                     .child(
                         div()

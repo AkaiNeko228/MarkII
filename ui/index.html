@@ -44,7 +44,7 @@
   <!-- hero: CPU + GPU -->
   <section class="hero">
     <div class="panel" id="p-cpu" style="--a:var(--indigo)">
-      <div class="ph"><span class="logo" id="cpu-logo"></span><span id="cpu-name">CPU</span>
+      <div class="ph"><span class="blogo" id="cpu-logo"></span><span id="cpu-name">CPU</span>
         <div class="seg sm" id="cpuview"><button data-v="cores">Núcleos</button><button data-v="threads">Threads</button><button data-v="both">Ambos</button></div></div>
       <div class="cpuwrap">
         <div class="pkg">
@@ -60,7 +60,7 @@
     </div>
 
     <div class="panel" id="p-gpu" style="--a:var(--green)">
-      <div class="ph"><span class="logo" id="gpu-logo"></span><span id="gpu-name">GPU</span><em id="gpu-tag2"></em></div>
+      <div class="ph"><span class="blogo" id="gpu-logo"></span><span id="gpu-name">GPU</span><em id="gpu-tag2"></em></div>
       <div class="gcard">
         <div class="gpkg"><div class="mrow" id="mem-top"></div>
           <div class="gdie2" id="gdie"><div class="gdt" id="gdie-t">—</div><div class="gds" id="gdie-s">—</div></div>
@@ -83,7 +83,7 @@
       <div class="rows" id="ram-mods"></div>
     </div>
     <div class="panel" id="p-board" style="--a:var(--orange)">
-      <div class="ph"><span class="logo" id="board-logo"></span><span id="board-name">Placa-mãe</span><em id="board-chip"></em></div>
+      <div class="ph"><span class="blogo" id="board-logo"></span><span id="board-name">Placa-mãe</span><em id="board-chip"></em></div>
       <div class="mobo">
         <div><div class="sl">SLOTS DE RAM</div><div class="slots" id="slots"></div></div>
         <div class="mobo-r">
@@ -164,6 +164,8 @@
       <label>Por pelo menos<input type="number" id="c-hold" min="0" max="600"><u>s</u></label>
       <label>Repetir a cada<input type="number" id="c-cool" min="1" max="240"><u>min</u></label>
     </div>
+    <h3>Tema</h3>
+    <div class="themes" id="themes"></div>
     <h3>Refrigeração</h3>
     <div class="fields one">
       <label>Tipo de cooler<select id="c-cooling"><option value="auto">Detectar automaticamente</option><option value="air">Air cooler</option><option value="water">Water cooler (AIO / custom)</option></select></label>

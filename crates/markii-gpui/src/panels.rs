@@ -14,9 +14,21 @@ use std::sync::{Arc, Mutex, OnceLock};
 fn logo_image(b: &Brand) -> Option<Arc<Image>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<Image>>>> = OnceLock::new();
     let svg = b.svg.as_ref()?;
-    let k = format!("{}{}", b.key, b.color);
+    // logos drawn in the text color (black brands) follow the theme
+    let fill = format!("#{:06X}", brand_col(b));
+    let k = format!("{}{fill}", b.key);
     let mut m = CACHE.get_or_init(Default::default).lock().ok()?;
-    Some(m.entry(k).or_insert_with(|| Arc::new(Image::from_bytes(ImageFormat::Svg, svg.clone().into_bytes()))).clone())
+    Some(
+        m.entry(k)
+            .or_insert_with(|| Arc::new(Image::from_bytes(ImageFormat::Svg, svg.replacen(&format!("fill=\"{}\"", b.color), &format!("fill=\"{fill}\""), 1).into_bytes())))
+            .clone(),
+    )
+}
+
+/// Brand colors are kept as they are; only the neutral (text) color follows the theme.
+fn brand_col(b: &Brand) -> u32 {
+    let v = hex(&b.color);
+    if v == TEXT { remap(TEXT) } else { v }
 }
 
 fn hex(s: &str) -> u32 {
@@ -26,7 +38,7 @@ fn hex(s: &str) -> u32 {
 /// Brand logo (plus "RADEON"/"ARC" when the product line has no logo of its
 /// own), or a text badge when no free logo exists. `None` for unknown brands.
 pub(crate) fn brand_mark(b: &Brand, size: f32) -> Option<AnyElement> {
-    let col = hex(&b.color);
+    let col = gpui::rgb(brand_col(b));
     if let Some(im) = logo_image(b) {
         return Some(
             div()
@@ -36,7 +48,7 @@ pub(crate) fn brand_mark(b: &Brand, size: f32) -> Option<AnyElement> {
                 .gap(px(4.))
                 .child(img(im).w(px(size)).h(px(size)).flex_none())
                 .when(!b.tag.is_empty(), |d| {
-                    d.child(div().font_family(NUM_FONT).font_weight(FontWeight::BOLD).text_size(px(size * 0.5)).text_color(c(col)).child(b.tag.clone()))
+                    d.child(div().font_family(NUM_FONT).font_weight(FontWeight::BOLD).text_size(px(size * 0.5)).text_color(col).child(b.tag.clone()))
                 })
                 .into_any_element(),
         );
@@ -48,11 +60,11 @@ pub(crate) fn brand_mark(b: &Brand, size: f32) -> Option<AnyElement> {
             .py(px(1.))
             .rounded(px(3.))
             .border_1()
-            .border_color(ca(col, 0.5))
+            .border_color(gpui::Hsla::from(col).opacity(0.5))
             .font_family(NUM_FONT)
             .font_weight(FontWeight::BOLD)
             .text_size(px((size * 0.45).max(9.5)))
-            .text_color(c(col))
+            .text_color(col)
             .child(b.name.to_uppercase())
             .into_any_element()
     })
@@ -109,7 +121,7 @@ where
             .font_family(NUM_FONT)
             .font_weight(FontWeight::SEMIBOLD)
             .cursor_pointer()
-            .when(on, |d| d.bg(c(INDIGO)).text_color(c(0x0d0f1a)))
+            .when(on, |d| d.bg(c(INDIGO)).text_color(c(if theme().light { PANEL } else { 0x0d0f1a })))
             .when(!on, |d| d.text_color(c(MUTED)).hover(|s| s.bg(c(PANEL2)).text_color(c(TEXT))))
             .on_click(cx.listener(move |this, _, _, cx| {
                 f(this, v);

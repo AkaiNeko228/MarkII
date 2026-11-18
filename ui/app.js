@@ -7,6 +7,8 @@ const hist = { cpu: [], gpu: [], mem: [], net: [], cput: [], gput: [] };
 const push = (k, v) => { const a = hist[k]; a.push(v); if (a.length > HIST) a.shift(); };
 
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+// theme-aware fixed colors (see style.css, generated per theme)
+const K = (h) => css("--k-" + h) || "#" + h;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const f0 = (v) => (v == null || !isFinite(v) ? "—" : Math.round(v).toString());
 const f1 = (v) => (v == null || !isFinite(v) ? "—" : v.toFixed(1));
@@ -76,8 +78,10 @@ let brands = null, brandsGpu = null;
 // logos are the app's own embedded SVG files (Simple Icons, CC0)
 function mark(b, size) {
   if (!b) return "";
-  if (b.svg) return `<span class="bmark" style="--s:${size}px">${b.svg}${b.tag ? `<b style="color:${b.color}">${esc(b.tag)}</b>` : ""}</span>`;
-  return b.name ? `<span class="bbadge" style="--c:${b.color}">${esc(b.name)}</span>` : "";
+  // logos drawn in the text color (black brands) follow the theme
+  const fill = b.color.toUpperCase() === "#E8EDF3" ? css("--text") : b.color;
+  if (b.svg) return `<span class="bmark" style="--s:${size}px">${b.svg.replace(`fill="${b.color}"`, `fill="${fill}"`)}${b.tag ? `<b style="color:${b.color}">${esc(b.tag)}</b>` : ""}</span>`;
+  return b.name ? `<span class="bbadge" style="--c:${fill}">${esc(b.name)}</span>` : "";
 }
 function loadBrands(gpu) {
   brandsGpu = gpu;
@@ -325,27 +329,27 @@ function renderPc(pc) {
 }
 
 // ---------- cooling ----------
-const FAN = (cx, cy, r, cls) => `<g class="${cls}" style="transform-origin:${cx}px ${cy}px">${[0, 72, 144, 216, 288].map((a) => `<path transform="rotate(${a} ${cx} ${cy})" d="M${cx} ${cy} C${cx} ${cy - r * .9} ${cx + r * .55} ${cy - r * .95} ${cx + r * .6} ${cy - r * .55} C${cx + r * .5} ${cy - r * .3} ${cx + r * .2} ${cy - r * .1} ${cx} ${cy}Z" fill="#3c4756"/>`).join("")}</g><circle cx="${cx}" cy="${cy}" r="${r * .22}" fill="#ffb020"/>`;
+const FAN = (cx, cy, r, cls) => `<g class="${cls}" style="transform-origin:${cx}px ${cy}px">${[0, 72, 144, 216, 288].map((a) => `<path transform="rotate(${a} ${cx} ${cy})" d="M${cx} ${cy} C${cx} ${cy - r * .9} ${cx + r * .55} ${cy - r * .95} ${cx + r * .6} ${cy - r * .55} C${cx + r * .5} ${cy - r * .3} ${cx + r * .2} ${cy - r * .1} ${cx} ${cy}Z" fill="${K("3c4756")}"/>`).join("")}</g><circle cx="${cx}" cy="${cy}" r="${r * .22}" fill="${K("ffb020")}"/>`;
 function coolArt(kind) {
   if (kind === "water") return `<svg viewBox="0 0 210 150">
-    <rect x="6" y="8" width="198" height="52" rx="4" fill="#161c24" stroke="#3a4452"/>
-    ${[...Array(30)].map((_, i) => `<line x1="${14 + i * 6.2}" y1="12" x2="${14 + i * 6.2}" y2="56" stroke="#262e39"/>`).join("")}
-    <circle cx="56" cy="34" r="22" fill="#10151b" stroke="#2c3540"/>${FAN(56, 34, 20, "spin fan")}
-    <circle cx="154" cy="34" r="22" fill="#10151b" stroke="#2c3540"/>${FAN(154, 34, 20, "spin fan")}
-    <path class="flow" d="M80 60 C80 90 90 100 100 112" fill="none" stroke="#44c7e0" stroke-width="5" stroke-linecap="round"/>
-    <path class="flow" d="M130 60 C130 90 120 100 112 112" fill="none" stroke="#ff8a3d" stroke-width="5" stroke-linecap="round"/>
-    <rect x="80" y="106" width="52" height="38" rx="8" fill="#1b2129" stroke="#5a6472"/>
-    <circle cx="106" cy="125" r="11" fill="none" stroke="#44c7e0" stroke-width="2" stroke-dasharray="10 4" class="spin pump" style="transform-origin:106px 125px"/><circle cx="106" cy="125" r="4" fill="#44c7e0"/>
+    <rect x="6" y="8" width="198" height="52" rx="4" fill="${K("161c24")}" stroke="${K("3a4452")}"/>
+    ${[...Array(30)].map((_, i) => `<line x1="${14 + i * 6.2}" y1="12" x2="${14 + i * 6.2}" y2="56" stroke="${K("262e39")}"/>`).join("")}
+    <circle cx="56" cy="34" r="22" fill="${K("10151b")}" stroke="${K("2c3540")}"/>${FAN(56, 34, 20, "spin fan")}
+    <circle cx="154" cy="34" r="22" fill="${K("10151b")}" stroke="${K("2c3540")}"/>${FAN(154, 34, 20, "spin fan")}
+    <path class="flow" d="M80 60 C80 90 90 100 100 112" fill="none" stroke="${K("44c7e0")}" stroke-width="5" stroke-linecap="round"/>
+    <path class="flow" d="M130 60 C130 90 120 100 112 112" fill="none" stroke="${K("ff8a3d")}" stroke-width="5" stroke-linecap="round"/>
+    <rect x="80" y="106" width="52" height="38" rx="8" fill="${K("1b2129")}" stroke="${K("5a6472")}"/>
+    <circle cx="106" cy="125" r="11" fill="none" stroke="${K("44c7e0")}" stroke-width="2" stroke-dasharray="10 4" class="spin pump" style="transform-origin:106px 125px"/><circle cx="106" cy="125" r="4" fill="${K("44c7e0")}"/>
   </svg>`;
   if (kind === "air") return `<svg viewBox="0 0 210 150">
-    <rect x="40" y="128" width="130" height="14" rx="2" fill="#1a2e22" stroke="#3a4452"/>
-    <rect x="88" y="118" width="34" height="12" rx="2" fill="#5a6472"/>
-    ${[...Array(4)].map((_, i) => `<path d="M${94 + i * 7} 120 L${94 + i * 7} 14" stroke="#b07a3a" stroke-width="3"/>`).join("")}
-    ${[...Array(22)].map((_, i) => `<rect x="70" y="${12 + i * 4.8}" width="96" height="2.4" fill="#4a5462"/>`).join("")}
-    <rect x="16" y="20" width="56" height="96" rx="4" fill="#10151b" stroke="#3a4452"/>
+    <rect x="40" y="128" width="130" height="14" rx="2" fill="${K("1a2e22")}" stroke="${K("3a4452")}"/>
+    <rect x="88" y="118" width="34" height="12" rx="2" fill="${K("5a6472")}"/>
+    ${[...Array(4)].map((_, i) => `<path d="M${94 + i * 7} 120 L${94 + i * 7} 14" stroke="${K("b07a3a")}" stroke-width="3"/>`).join("")}
+    ${[...Array(22)].map((_, i) => `<rect x="70" y="${12 + i * 4.8}" width="96" height="2.4" fill="${K("4a5462")}"/>`).join("")}
+    <rect x="16" y="20" width="56" height="96" rx="4" fill="${K("10151b")}" stroke="${K("3a4452")}"/>
     ${FAN(44, 68, 25, "spin fan")}
   </svg>`;
-  return `<svg viewBox="0 0 210 150"><rect x="55" y="25" width="100" height="100" rx="8" fill="none" stroke="#3a4452" stroke-dasharray="6 5"/><text x="105" y="90" text-anchor="middle" font-size="48" fill="#556070" font-family="Bahnschrift">?</text></svg>`;
+  return `<svg viewBox="0 0 210 150"><rect x="55" y="25" width="100" height="100" rx="8" fill="none" stroke="${K("3a4452")}" stroke-dasharray="6 5"/><text x="105" y="90" text-anchor="middle" font-size="48" fill="${K("556070")}" font-family="Bahnschrift">?</text></svg>`;
 }
 let lastCoolKind = "";
 function renderCooling(c, cpu) {
@@ -463,6 +467,31 @@ function setRate(ms, send) {
 let cfg = null;
 const F = { alerts_enabled: "c-alerts", notify: "c-notify", close_to_tray: "c-tray" };
 const N = { cpu_temp: "c-cpu", gpu_temp: "c-gpu", ram_pct: "c-ram", disk_pct: "c-disk", hold_s: "c-hold", cooldown_min: "c-cool" };
+// ---------- themes ----------
+const THEMES = [
+  ["grafite", "Grafite", "", ["#0a0d11", "#11151b", "#222a35", "#e8edf3"], ["#ffb020", "#7b7ff5", "#3fd17a", "#44c7e0"]],
+  ["roxo", "Roxo", " · escuro", ["#07060b", "#0e0c15", "#221d33", "#ece8f6"], ["#b57cff", "#8f6bff", "#5fd49a", "#7aa8ff"]],
+  ["lavanda", "Lavanda", " · escuro", ["#14121d", "#1b1927", "#2f2b40", "#eeeaf8"], ["#f6c98e", "#b6a9f6", "#9fdfb9", "#a0d6ee"]],
+  ["menta", "Menta", " · escuro", ["#0e1818", "#142121", "#243736", "#e6f3f0"], ["#f1d19c", "#abb9f1", "#9fe5c2", "#91dbe0"]],
+  ["algodao", "Algodão-doce", " · claro", ["#f5eff7", "#fffbff", "#e4d7ea", "#382e44"], ["#d08a2c", "#7d6fd9", "#2f9f6a", "#2c92b5"]],
+  ["pistache", "Pistache", " · claro", ["#eff5ef", "#fbfefb", "#d4e4d8", "#2a3831"], ["#c8862a", "#6a80d2", "#2a9663", "#2a8faa"]],
+];
+function applyTheme(key) {
+  if (!THEMES.some((t) => t[0] === key)) key = "grafite";
+  if (key === "grafite") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = key;
+  document.querySelectorAll("#themes button").forEach((b) => b.classList.toggle("on", b.dataset.v === key));
+  // inline SVG / canvas colors are read from CSS: redraw them
+  if (brands) { $("cpu-logo").innerHTML = mark(brands.cpu, 28); $("gpu-logo").innerHTML = mark(brands.gpu, 28); $("board-logo").innerHTML = mark(brands.board, 28); }
+  lastCoolKind = null;
+  if (lastT) render(lastT);
+}
+$("themes").innerHTML = THEMES.map(([k, n, sfx, g, a]) => `<button data-v="${k}"><div class="sw" style="background:${g[0]}"><div style="background:${g[1]};border-color:${g[2]}"><i style="background:${g[3]}"></i>${a.map((c) => `<b style="background:${c}"></b>`).join("")}</div></div><span>${n}<small>${sfx.replace(" · ", "") || "padrão"}</small></span></button>`).join("");
+document.querySelectorAll("#themes button").forEach((b) => b.addEventListener("click", () => {
+  applyTheme(b.dataset.v);
+  if (cfg) { cfg.theme = b.dataset.v; invoke("save_config", { cfg }); }
+}));
+
 function fillSettings() {
   if (!cfg) return;
   for (const [k, id] of Object.entries(F)) $(id).checked = !!cfg[k];
@@ -482,13 +511,14 @@ $("save-settings").onclick = async () => {
   next.cooling = $("c-cooling").value;
   next.sensors_admin = $("c-admin").checked;
   next.cpu_view = cpuView;
+  next.theme = cfg.theme || "grafite";
   next.interval_ms = rateMs;
   try { cfg = (await invoke("save_config", { cfg: next })) || next; $("save-msg").textContent = "salvo ✓"; setTimeout(() => ($("settings").hidden = true), 600); }
   catch (e) { $("save-msg").style.color = "var(--red)"; $("save-msg").textContent = String(e); }
 };
 
 if (TAURI) {
-  invoke("get_config").then((c) => { cfg = c; cpuView = c.cpu_view || "cores"; setRate(c.interval_ms, false); });
+  invoke("get_config").then((c) => { cfg = c; cpuView = c.cpu_view || "cores"; applyTheme(c.theme); setRate(c.interval_ms, false); });
   invoke("get_pcinfo").then((p) => p && renderPc(p));
   TAURI.event.listen("pcinfo", (e) => renderPc(e.payload));
   TAURI.event.listen("telemetry", (e) => render(e.payload));

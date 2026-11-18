@@ -66,6 +66,7 @@ fn tray_icon() -> Option<tray_icon::Icon> {
 fn main() {
     let cfg_path = config_path();
     let cfg = Arc::new(Mutex::new(Config::load(&cfg_path)));
+    theme::set_theme(&cfg.lock().unwrap().theme);
     let pc: Arc<Mutex<Option<PcInfo>>> = Arc::new(Mutex::new(None));
 
     {
