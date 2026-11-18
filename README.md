@@ -74,6 +74,8 @@ crates/markii-core/   coleta de dados, sem interface
   hw.rs               estruturas dos sensores + mapeamento do HWiNFO
   cpufreq.rs          clock real por núcleo (contadores PDH do Windows)
   pcinfo.rs           identificação do PC (WMI) e detecção do cooler
+  linux.rs            sensores no Linux (hwmon, /proc/stat, RAPL)
+  pcinfo_linux.rs     identificação do PC no Linux (/sys, lspci, dmidecode)
   alerts.rs           configuração e motor de alertas
 crates/markii-gpui/   app nativo GPUI
   view.rs             layout, cabeçalho, Este PC, refrigeração, temperaturas, configurações
@@ -112,6 +114,11 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 ## v0.5.1
 
 - Temas: **Grafite** (padrão), **Roxo** (preto com roxo escuro), **Lavanda** e **Menta** (pastel escuros), **Algodão-doce** e **Pistache** (pastel claros). Escolha em Configurações → Tema; muda na hora e fica salvo.
+
+## v0.5.2
+
+- **Linux (x64)**: versão nativa GPUI. Sensores direto do kernel (hwmon/lm-sensors), sem driver extra nem administrador; GPU NVIDIA pelo NVML e AMD pelo amdgpu. Potência da CPU (RAPL) e marca/slot de cada pente (dmidecode) só como root. Sem ícone na bandeja. O build é feito pelo GitHub Actions (`.github/workflows/linux.yml`), que anexa o `.tar.gz` ao release.
+- Correção: no GPUI os logos SVG saíam com vermelho e azul trocados (o logo da Intel aparecia laranja).
 
 ## Próximos sprints
 
