@@ -19,27 +19,39 @@ O Windows não expõe a temperatura da CPU sem driver. Para ver temperaturas, po
 
 ## Rodar
 
-Requisitos: Rust (MSVC), Node.js, WebView2 (já vem no Windows 11).
+Requisitos: Rust (MSVC). O app principal agora é **nativo em GPUI** (o framework de interface do editor Zed, desenhado direto na GPU, sem navegador embutido).
+
+```bash
+cargo run -p markii-gpui            # app GPUI (principal)
+cargo build -p markii-gpui --release
+```
+
+A versão antiga com interface web (Tauri) continua no repositório:
 
 ```bash
 npm install
-npm run dev      # abre o app
-npm run build    # gera o instalador em src-tauri/target/release/bundle/nsis
+npm run dev
 ```
-
-Para ver só o layout no navegador (com dados de demonstração), sirva a pasta `ui/` em qualquer servidor estático.
 
 ## Estrutura
 
 ```
-ui/                 interface (HTML/CSS/JS puro, sem build)
-src-tauri/src/
-  main.rs           coleta (sysinfo + NVML + HWiNFO) e envia o evento "telemetry"
-  hwinfo.rs         leitura da memória compartilhada do HWiNFO
-  hw.rs             mapeia sensores do HWiNFO para os campos do painel
-  alerts.rs         configuração e motor de alertas
-  pcinfo.rs         identificação do PC (WMI) e detecção do tipo de cooler
+crates/markii-core/   coleta de dados, sem interface
+  lib.rs              Collector: sysinfo + NVML + HWiNFO + clocks reais + alertas
+  hwinfo.rs           memória compartilhada do HWiNFO
+  hw.rs               mapeia sensores do HWiNFO
+  cpufreq.rs          clock real por núcleo (contadores PDH do Windows)
+  pcinfo.rs           identificação do PC (WMI) e detecção do cooler
+  alerts.rs           configuração e motor de alertas
+crates/markii-gpui/   app nativo GPUI
+  view.rs             painel (CPU, GPU, Este PC, refrigeração, alertas, configurações)
+  draw.rs             gráficos e sprites desenhados (barras, linhas, ventoinhas, coolers)
+  theme.rs            paleta grafite + âmbar
+  main.rs             janela, bandeja, notificações, thread de coleta
+src-tauri/ + ui/      versão Tauri (interface web), usa o mesmo markii-core
 ```
+
+As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 
 ## Sprint 2
 

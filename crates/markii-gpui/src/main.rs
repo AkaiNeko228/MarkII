@@ -1,0 +1,209 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//! Mark II — native GPUI front end.
+
+mod draw;
+mod theme;
+mod view;
+
+use gpui::{px, size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
+use markii_core::{pcinfo, Collector, Config, PcInfo, Telemetry};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
+use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use view::Dashboard;
+
+pub fn notify(title: &str, body: &str) {
+    let _ = notify_rust::Notification::new().summary(title).body(body).show();
+}
+
+/// Same file the Tauri build uses, so settings carry over.
+fn config_path() -> PathBuf {
+    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    base.join("com.akaineko.markii").join("config.json")
+}
+
+static HWND: AtomicIsize = AtomicIsize::new(0);
+
+#[cfg(windows)]
+mod win {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE, SW_RESTORE, SW_SHOW};
+    pub fn hide(h: isize) {
+        unsafe { ShowWindow(h as _, SW_HIDE) };
+    }
+    pub fn show(h: isize) {
+        unsafe {
+            if IsIconic(h as _) != 0 {
+                ShowWindow(h as _, SW_RESTORE);
+            }
+            ShowWindow(h as _, SW_SHOW);
+            SetForegroundWindow(h as _);
+        }
+    }
+    pub fn visible(h: isize) -> bool {
+        unsafe { IsWindowVisible(h as _) != 0 && IsIconic(h as _) == 0 }
+    }
+}
+
+fn tray_icon() -> Option<tray_icon::Icon> {
+    let bytes = include_bytes!("../../../src-tauri/icons/32x32.png");
+    let dec = png::Decoder::new(std::io::Cursor::new(&bytes[..]));
+    let mut r = dec.read_info().ok()?;
+    let mut buf = vec![0; r.output_buffer_size()];
+    let info = r.next_frame(&mut buf).ok()?;
+    let rgba: Vec<u8> = match info.color_type {
+        png::ColorType::Rgba => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgb => buf[..info.buffer_size()].chunks(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        _ => return None,
+    };
+    tray_icon::Icon::from_rgba(rgba, info.width, info.height).ok()
+}
+
+fn main() {
+    let cfg_path = config_path();
+    let cfg = Arc::new(Mutex::new(Config::load(&cfg_path)));
+    let pc: Arc<Mutex<Option<PcInfo>>> = Arc::new(Mutex::new(None));
+
+    {
+        let pc = pc.clone();
+        std::thread::spawn(move || *pc.lock().unwrap() = Some(pcinfo::collect()));
+    }
+
+    let (tx, rx) = mpsc::channel::<(Telemetry, Vec<markii_core::Active>)>();
+    {
+        let (cfg, pc) = (cfg.clone(), pc.clone());
+        std::thread::spawn(move || {
+            let mut col = Collector::new();
+            loop {
+                let c = cfg.lock().unwrap().clone();
+                std::thread::sleep(Duration::from_millis(c.interval_ms.clamp(250, 10_000)));
+                let p = pc.lock().unwrap().clone();
+                if tx.send(col.sample(&c, p.as_ref())).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    Application::new().run(move |cx: &mut App| {
+        let bounds = Bounds::centered(None, size(px(1120.), px(860.)), cx);
+        let opts = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions { title: Some("Mark II".into()), ..Default::default() }),
+            window_min_size: Some(size(px(940.), px(600.))),
+            ..Default::default()
+        };
+        let view = cx.new(|_| Dashboard {
+            t: None,
+            pc: None,
+            cfg: cfg.clone(),
+            cfg_path: cfg_path.clone(),
+            hist: Default::default(),
+            fan_angle: 0.0,
+            gpu_fan_angle: 0.0,
+            pump_angle: 0.0,
+            settings: None,
+            save_msg: "".into(),
+        });
+        let v2 = view.clone();
+        let cfg_close = cfg.clone();
+        cx.open_window(opts, move |window, cx| {
+            if let Ok(h) = window.window_handle() {
+                if let RawWindowHandle::Win32(w) = h.as_raw() {
+                    HWND.store(w.hwnd.get(), Ordering::Relaxed);
+                }
+            }
+            window.on_window_should_close(cx, move |_, cx| {
+                if cfg_close.lock().unwrap().close_to_tray {
+                    #[cfg(windows)]
+                    win::hide(HWND.load(Ordering::Relaxed));
+                    false
+                } else {
+                    cx.quit();
+                    true
+                }
+            });
+            v2
+        })
+        .expect("failed to open window");
+
+        // Tray icon with Show / Quit.
+        let show_i = MenuItem::new("Mostrar Mark II", true, None);
+        let quit_i = MenuItem::new("Sair", true, None);
+        let menu = Menu::new();
+        let _ = menu.append(&show_i);
+        let _ = menu.append(&quit_i);
+        let mut tb = TrayIconBuilder::new().with_tooltip("Mark II").with_menu(Box::new(menu)).with_menu_on_left_click(false);
+        if let Some(i) = tray_icon() {
+            tb = tb.with_icon(i);
+        }
+        let tray = tb.build().ok();
+        let (show_id, quit_id) = (show_i.id().clone(), quit_i.id().clone());
+
+        let cfg = cfg.clone();
+        let pc = pc.clone();
+        cx.spawn(async move |cx| {
+            let _keep = (show_i, quit_i);
+            let mut last_anim = Instant::now();
+            loop {
+                cx.background_executor().timer(Duration::from_millis(50)).await;
+                let hwnd = HWND.load(Ordering::Relaxed);
+                #[cfg(windows)]
+                let visible = win::visible(hwnd);
+                #[cfg(not(windows))]
+                let visible = true;
+
+                // New samples from the collector thread.
+                while let Ok((t, fire)) = rx.try_recv() {
+                    if cfg.lock().unwrap().notify {
+                        for a in &fire {
+                            notify(&format!("Mark II · {}", a.title), &format!("{:.0} {} (limite {:.0} {})", a.value, a.unit, a.limit, a.unit));
+                        }
+                    }
+                    if let Some(tr) = &tray {
+                        let _ = tr.set_tooltip(Some(t.tooltip()));
+                    }
+                    let pcv = pc.lock().unwrap().clone();
+                    let _ = view.update(cx, |v, cx| {
+                        if v.pc.is_none() {
+                            v.pc = pcv;
+                        }
+                        v.ingest(t);
+                        cx.notify();
+                    });
+                }
+
+                // Tray clicks and menu.
+                while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                        #[cfg(windows)]
+                        if visible { win::hide(hwnd) } else { win::show(hwnd) }
+                    }
+                }
+                while let Ok(ev) = MenuEvent::receiver().try_recv() {
+                    if ev.id == show_id {
+                        #[cfg(windows)]
+                        win::show(hwnd);
+                    } else if ev.id == quit_id {
+                        let _ = cx.update(|cx| cx.quit());
+                    }
+                }
+
+                // Sprite animation (~20 fps) only while the window is on screen.
+                let dt = last_anim.elapsed().as_secs_f32();
+                last_anim = Instant::now();
+                if visible {
+                    let _ = view.update(cx, |v, cx| {
+                        v.animate(dt);
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+        cx.activate(true);
+    });
+}

@@ -1,0 +1,23 @@
+[package]
+name = "markii-gpui"
+version = "0.1.0"
+edition = "2021"
+description = "Mark II PC monitor - native GPUI front end"
+
+[[bin]]
+name = "markii"
+path = "src/main.rs"
+
+[dependencies]
+gpui = "0.2.2"
+markii-core = { path = "../markii-core" }
+tray-icon = "0.26"
+notify-rust = "4"
+png = "0.17"
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+winresource = "0.1"

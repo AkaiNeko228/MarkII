@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "gpui": "cargo run -p markii-gpui",
     "tauri": "tauri"
   },
   "devDependencies": {
