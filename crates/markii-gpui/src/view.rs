@@ -233,7 +233,7 @@ impl Dashboard {
                                     .text_size(px(12.))
                                     .text_color(c(MUTED))
                                     .child(div().text_color(c(TEXT)).font_weight(FontWeight::SEMIBOLD).child(t.host.clone()))
-                                    .child(format!("· ligado há {} · GPUI", uptime(t.uptime))),
+                                    .child(format!("· ligado há {} · v{}", uptime(t.uptime), env!("CARGO_PKG_VERSION"))),
                             ),
                     ),
             )

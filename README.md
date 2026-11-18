@@ -26,7 +26,7 @@ CPU, ventoinhas e placa-mãe só podem ser lidos com acesso de kernel. O app usa
 - Ao abrir, o app pede permissão de administrador (UAC) **só para o auxiliar**; a interface continua como usuário comum.
 - O auxiliar **só envia** dados por um *named pipe* local; ele não recebe comandos.
 - Se o UAC for recusado, aparece um aviso e o auxiliar roda **sem administrador** (GPU e discos continuam funcionando) com um botão "Tentar com administrador".
-- Se o PawnIO não estiver instalado, o aviso tem o botão "Instalar PawnIO" (usa o instalador oficial que acompanha o release).
+- Se o PawnIO não estiver instalado, o aviso tem o botão "Instalar PawnIO", que roda o instalador oficial que vem junto do app (`vendor/pawnio/`, GPL-2.0). Nada é baixado da internet.
 - O HWiNFO continua funcionando como fonte alternativa, se estiver aberto com *Shared Memory Support*.
 
 ## Rodar
@@ -47,6 +47,12 @@ dotnet publish sensors -c Release -o target/sensors
 ```
 
 O app procura `markii-sensors.exe` ao lado do executável, em `sensors/` ou em `../sensors/` (o `target/sensors` acima serve para `target/release`). A variável `MARKII_SENSORS` aponta para outro caminho.
+
+Para gerar os zips de release (compila tudo e confere se cada zip tem o auxiliar, o instalador do PawnIO e as licenças):
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/package.ps1
+```
 
 A versão com interface web (Tauri) continua no repositório e tem os mesmos painéis:
 

@@ -103,7 +103,13 @@ fn exe_dir() -> Option<PathBuf> {
 /// Finds a file shipped next to the app (release zip) or in the dev build tree.
 fn find_shipped(name: &str) -> Option<PathBuf> {
     let d = exe_dir()?;
-    [d.join(name), d.join("sensors").join(name), d.join("..").join("sensors").join(name)]
+    [
+        d.join(name),
+        d.join("sensors").join(name),
+        d.join("..").join("sensors").join(name),
+        // dev tree: target/<profile>/ -> vendor/pawnio/
+        d.join("..").join("..").join("vendor").join("pawnio").join(name),
+    ]
         .into_iter()
         .find(|p| p.exists())
 }
@@ -322,7 +328,7 @@ fn spawn_plain(exe: &std::path::Path, args: &str) -> Result<windows_sys::Win32::
 }
 
 /// Installs the PawnIO driver with the official installer shipped next to the app.
-/// Blocks until the installer exits. Falls back to opening the download page.
+/// Blocks until the installer exits. Nothing is downloaded.
 pub fn install_pawnio() -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -338,8 +344,7 @@ pub fn install_pawnio() -> Result<(), String> {
                 Err(e) => Err(format!("erro {e}")),
             };
         }
-        let _ = std::process::Command::new("explorer").arg("https://pawnio.eu/").spawn();
-        Err("instalador não incluído: abrindo pawnio.eu para baixar".into())
+        Err("PawnIO_setup.exe não está na pasta do Mark II; extraia o zip completo".into())
     }
     #[cfg(not(windows))]
     Err("só no Windows".into())
