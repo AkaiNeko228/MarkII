@@ -8,66 +8,45 @@
 </head>
 <body>
 <header class="top">
-  <div>
-    <div class="kicker">MARK II · PC MONITOR</div>
-    <h1 id="host">—</h1>
-    <div class="summary" id="summary">aguardando dados…</div>
-  </div>
-  <div class="right">
-    <div class="seg" id="rate">
-      <button data-ms="500">0.5 s</button>
-      <button data-ms="1000" class="on">1 s</button>
-      <button data-ms="2000">2 s</button>
-      <button data-ms="5000">5 s</button>
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#161b22"/><path d="M96 330 L176 250 L236 300 L320 190 L416 260" fill="none" stroke="#ffb020" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/><circle cx="320" cy="190" r="26" fill="#4cc9dc"/></svg>
+    <div>
+      <div class="wordmark">MARK<b>II</b></div>
+      <div class="hostline"><span id="host">—</span> · ligado há <span id="uptime">—</span></div>
     </div>
-    <div class="status" id="status"></div>
+  </div>
+  <div class="actions">
+    <div class="seg" id="rate">
+      <button data-ms="500">0.5s</button>
+      <button data-ms="1000" class="on">1s</button>
+      <button data-ms="2000">2s</button>
+      <button data-ms="5000">5s</button>
+    </div>
+    <button class="icon-btn" id="open-settings" title="Configurações">
+      <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+    </button>
   </div>
 </header>
 
+<div class="alertbar" id="alertbar" hidden></div>
+<div class="srcbar" id="status"></div>
+
 <main>
-  <!-- row 1 -->
-  <section class="grid g4">
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--indigo)"></span>CPU<span class="tag" id="cpu-tag">load</span></div>
-      <div class="big"><span id="cpu-load">—</span><small>%</small></div><div class="sub" id="cpu-sub">—</div><canvas class="spark" id="sp-cpu"></canvas></div>
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--green)"></span>GPU<span class="tag">load</span></div>
-      <div class="big"><span id="gpu-load">—</span><small>%</small></div><div class="sub" id="gpu-sub">—</div><canvas class="spark" id="sp-gpu"></canvas></div>
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--orange)"></span>Memória<span class="tag">RAM</span></div>
-      <div class="big"><span id="mem-pct">—</span><small>%</small></div><div class="sub" id="mem-sub">—</div><canvas class="spark" id="sp-mem"></canvas></div>
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--cyan)"></span>Rede<span class="tag">download</span></div>
-      <div class="big"><span id="net-rx">—</span><small id="net-rx-u"></small></div><div class="sub" id="net-sub">—</div><canvas class="spark" id="sp-net"></canvas></div>
+  <!-- vitals strip -->
+  <section class="vitals">
+    <div class="vital" id="v-cpu" style="--a:var(--indigo)"><div class="vk">CPU</div><div class="vv"><span id="cpu-load">—</span><u>%</u></div><div class="vs" id="cpu-sub">—</div><canvas class="bars" id="sp-cpu"></canvas></div>
+    <div class="vital" id="v-gpu" style="--a:var(--green)"><div class="vk">GPU</div><div class="vv"><span id="gpu-load">—</span><u>%</u></div><div class="vs" id="gpu-sub">—</div><canvas class="bars" id="sp-gpu"></canvas></div>
+    <div class="vital" id="v-ram" style="--a:var(--amber)"><div class="vk">RAM</div><div class="vv"><span id="mem-pct">—</span><u>%</u></div><div class="vs" id="mem-sub">—</div><canvas class="bars" id="sp-mem"></canvas></div>
+    <div class="vital" id="v-net" style="--a:var(--cyan)"><div class="vk">REDE ↓</div><div class="vv"><span id="net-rx">—</span><u id="net-rx-u"></u></div><div class="vs" id="net-sub">—</div><canvas class="bars" id="sp-net"></canvas></div>
   </section>
 
-  <!-- row 2 -->
-  <section class="grid g2">
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--red)"></span>CPU<span class="tag" id="cpu-src">HWiNFO</span></div>
-      <div class="trio">
-        <div><div class="mid" id="cpu-temp">—</div><div class="lbl">Temperatura</div></div>
-        <div><div class="mid" id="cpu-clk">—</div><div class="lbl">Clock médio</div></div>
-        <div><div class="mid" id="cpu-pwr">—</div><div class="lbl">Potência</div></div>
-      </div><div class="foot" id="cpu-foot">—</div></div>
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--green)"></span>GPU<span class="tag">NVML</span></div>
-      <div class="trio">
-        <div><div class="mid" id="gpu-temp">—</div><div class="lbl">Temperatura</div></div>
-        <div><div class="mid" id="gpu-fan">—</div><div class="lbl">Fan</div></div>
-        <div><div class="mid" id="gpu-pwr">—</div><div class="lbl">Potência</div></div>
-      </div><div class="foot" id="gpu-foot">—</div></div>
-  </section>
-
-  <!-- row 3 -->
-  <section class="grid g3">
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--indigo)"></span>Temperatura CPU<span class="tag">pacote</span></div>
-      <div class="big"><span id="cpu-t2">—</span><small>°</small></div><div class="sub" id="cpu-t2-sub">—</div><canvas class="spark tall" id="sp-cput"></canvas></div>
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--green)"></span>Temperatura GPU<span class="tag">core</span></div>
-      <div class="big"><span id="gpu-t2">—</span><small>°</small></div><div class="sub" id="gpu-t2-sub">—</div><canvas class="spark tall" id="sp-gput"></canvas></div>
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--yellow)"></span>Armazenamento<span class="tag" id="disk-tag"></span></div>
-      <div class="rows" id="disks"></div></div>
-  </section>
-
-  <!-- row 4: diagrams -->
-  <section class="grid gdiag">
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--indigo)"></span><span id="cpu-name">CPU</span><span class="tag">por núcleo</span></div>
+  <!-- hero: hardware sprites -->
+  <section class="hero">
+    <div class="panel" id="p-cpu" style="--a:var(--indigo)">
+      <div class="ph"><span id="cpu-name">CPU</span><em id="cpu-src">por núcleo</em></div>
       <div class="cpuwrap">
         <div class="pkg">
+          <div class="pins t"></div><div class="pins b"></div>
           <div class="die">
             <div class="dielbl" id="die-lbl">DIE</div>
             <div class="coregrid">
@@ -75,16 +54,17 @@
               <div class="ring"><span id="ring-lbl">Ring / L3</span></div>
               <div class="col" id="col-r"></div>
             </div>
-            <div class="uncore"><div>UHD 630</div><div>System agent · DDR4</div></div>
+            <div class="uncore"><div>iGPU</div><div>System agent · DDR4</div></div>
           </div>
-          <div class="caps l"></div><div class="caps r"></div>
         </div>
         <div class="side" id="cpu-side"></div>
       </div>
     </div>
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--green)"></span><span id="gpu-name">GPU</span><span class="tag" id="gpu-tag2"></span></div>
+
+    <div class="panel" id="p-gpu" style="--a:var(--green)">
+      <div class="ph"><span id="gpu-name">GPU</span><em id="gpu-tag2"></em></div>
       <div class="board">
-        <div class="bracket"><i></i><i></i><i></i><i></i></div>
+        <div class="bracket"><i></i><i></i><i></i></div>
         <div class="vrm"><div class="blbl">VRM</div><div class="chokes" id="chokes"></div><div class="pv" id="vrm-w">—</div></div>
         <div class="gpuarea">
           <div class="mems top" id="mem-top"></div>
@@ -95,8 +75,8 @@
           </div>
           <div class="memcap" id="mem-cap">—</div>
         </div>
-        <div class="pconn"><div class="plug">8-pin</div><div class="pv" id="pc-w">—</div><div class="ps" id="pc-s">—</div>
-          <div class="fanspr" id="fanspr"><svg viewBox="0 0 40 40"><g id="fanblades"><path d="M20 20 C20 8 28 6 30 10 C31 14 24 16 20 20Z"/><path d="M20 20 C32 20 34 28 30 30 C26 31 24 24 20 20Z"/><path d="M20 20 C20 32 12 34 10 30 C9 26 16 24 20 20Z"/><path d="M20 20 C8 20 6 12 10 10 C14 9 16 16 20 20Z"/></g><circle cx="20" cy="20" r="3"/></svg><span id="fan-lbl">—</span></div>
+        <div class="pconn"><div class="plug">8-PIN</div><div class="pv" id="pc-w">—</div><div class="ps" id="pc-s">—</div>
+          <div class="fanspr"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" class="ring2"/><g id="fanblades"><path d="M20 20 C20 8 28 6 30 10 C31 14 24 16 20 20Z"/><path d="M20 20 C32 20 34 28 30 30 C26 31 24 24 20 20Z"/><path d="M20 20 C20 32 12 34 10 30 C9 26 16 24 20 20Z"/><path d="M20 20 C8 20 6 12 10 10 C14 9 16 16 20 20Z"/></g><circle cx="20" cy="20" r="3" class="hub"/></svg><span id="fan-lbl">—</span></div>
         </div>
         <div class="fingers"></div>
       </div>
@@ -104,12 +84,74 @@
     </div>
   </section>
 
-  <!-- row 5 -->
-  <section class="grid g2">
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--pink)"></span>Processos<span class="tag">top CPU</span></div><div class="rows" id="procs"></div></div>
-    <div class="card"><div class="ch"><span class="dot" style="--c:var(--cyan)"></span>Ventoinhas<span class="tag" id="fans-tag">HWiNFO</span></div><div class="rows" id="fans"></div></div>
+  <!-- identity + cooling -->
+  <section class="duo">
+    <div class="panel" id="p-pc" style="--a:var(--amber)">
+      <div class="ph">Este PC<em id="pc-tag">identificando…</em></div>
+      <div class="spec" id="pc-spec"><div class="empty">lendo informações do sistema…</div></div>
+    </div>
+    <div class="panel" id="p-cool" style="--a:var(--cyan)">
+      <div class="ph">Refrigeração da CPU<em id="cool-conf">—</em></div>
+      <div class="coolwrap">
+        <div class="coolart" id="cool-art"></div>
+        <div class="coolinfo">
+          <div class="cooltype" id="cool-type">—</div>
+          <div class="coolreason" id="cool-reason">—</div>
+          <div class="coolstats" id="cool-stats"></div>
+          <div class="cooltip" id="cool-tip"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- thermals + storage -->
+  <section class="duo">
+    <div class="panel" id="p-therm" style="--a:var(--red)">
+      <div class="ph">Temperaturas<em id="therm-sub">—</em></div>
+      <div class="thermnums">
+        <div><div class="tk"><i style="background:var(--indigo)"></i>CPU pacote</div><div class="tv" id="cpu-temp">—</div></div>
+        <div><div class="tk"><i style="background:var(--green)"></i>GPU core</div><div class="tv" id="gpu-temp">—</div></div>
+        <div><div class="tk">CPU potência</div><div class="tv sm" id="cpu-pwr">—</div></div>
+        <div><div class="tk">GPU potência</div><div class="tv sm" id="gpu-pwr">—</div></div>
+      </div>
+      <canvas class="lines" id="sp-therm"></canvas>
+    </div>
+    <div class="panel" style="--a:var(--amber)">
+      <div class="ph">Armazenamento<em id="disk-tag"></em></div>
+      <div class="rows" id="disks"></div>
+    </div>
+  </section>
+
+  <section class="duo">
+    <div class="panel" style="--a:var(--pink)"><div class="ph">Processos<em>top CPU</em></div><div class="rows" id="procs"></div></div>
+    <div class="panel" style="--a:var(--cyan)"><div class="ph">Ventoinhas<em id="fans-tag">HWiNFO</em></div><div class="rows" id="fans"></div></div>
   </section>
 </main>
+
+<!-- settings -->
+<div class="modal" id="settings" hidden>
+  <div class="sheet">
+    <div class="sh"><b>Configurações</b><button class="icon-btn" id="close-settings" title="Fechar">✕</button></div>
+    <h3>Alertas</h3>
+    <label class="tg"><input type="checkbox" id="c-alerts"><span>Alertas ativos</span></label>
+    <label class="tg"><input type="checkbox" id="c-notify"><span>Notificação do Windows</span></label>
+    <div class="fields">
+      <label>CPU acima de<input type="number" id="c-cpu" min="40" max="110"><u>°C</u></label>
+      <label>GPU acima de<input type="number" id="c-gpu" min="40" max="110"><u>°C</u></label>
+      <label>RAM acima de<input type="number" id="c-ram" min="10" max="100"><u>%</u></label>
+      <label>Disco acima de<input type="number" id="c-disk" min="10" max="100"><u>%</u></label>
+      <label>Por pelo menos<input type="number" id="c-hold" min="0" max="600"><u>s</u></label>
+      <label>Repetir a cada<input type="number" id="c-cool" min="1" max="240"><u>min</u></label>
+    </div>
+    <h3>Refrigeração</h3>
+    <div class="fields one">
+      <label>Tipo de cooler<select id="c-cooling"><option value="auto">Detectar automaticamente</option><option value="air">Air cooler</option><option value="water">Water cooler (AIO / custom)</option></select></label>
+    </div>
+    <h3>Janela</h3>
+    <label class="tg"><input type="checkbox" id="c-tray"><span>Fechar minimiza para a bandeja</span></label>
+    <div class="sf"><button class="btn ghost" id="test-alert">Testar notificação</button><span id="save-msg"></span><button class="btn" id="save-settings">Salvar</button></div>
+  </div>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

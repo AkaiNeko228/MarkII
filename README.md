@@ -37,9 +37,20 @@ src-tauri/src/
   main.rs           coleta (sysinfo + NVML + HWiNFO) e envia o evento "telemetry"
   hwinfo.rs         leitura da memória compartilhada do HWiNFO
   hw.rs             mapeia sensores do HWiNFO para os campos do painel
+  alerts.rs         configuração e motor de alertas
+  pcinfo.rs         identificação do PC (WMI) e detecção do tipo de cooler
 ```
+
+## Sprint 2
+
+- **Identidade visual própria**: grafite + âmbar, fonte Bahnschrift, gráficos em barras.
+- **Este PC**: fabricante/modelo, placa-mãe, BIOS, Windows, CPU, cada pente de RAM, GPU e driver, modelo de cada disco, com dicas (ex.: RAM em single channel).
+- **Refrigeração**: detecta water cooler ou air cooler (bomba nos sensores do HWiNFO ou controlador USB de AIO conhecido) e mostra o desenho correspondente com ventoinhas/bomba animadas. Dá para escolher manualmente nas configurações.
+- **Alertas**: CPU, GPU, RAM e discos acima do limite por X segundos → faixa vermelha no app + notificação do Windows, com intervalo para não repetir.
+- **Bandeja**: fechar a janela minimiza para a bandeja; o ícone mostra CPU/GPU/RAM no tooltip; clique abre/esconde; menu com "Sair".
+- Configurações salvas em `%APPDATA%\com.akaineko.markii\config.json`.
 
 ## Próximos sprints
 
-- Sprint 2: alertas de temperatura, janela compacta/sempre no topo, ícone na bandeja
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo
+- Sprint 4: modo compacto / overlay sempre no topo
