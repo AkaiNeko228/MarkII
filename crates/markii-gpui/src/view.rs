@@ -87,6 +87,11 @@ pub(crate) fn panel(accent: u32, title: impl Into<SharedString>, tag: impl Into<
 
 /// Same as [`panel`] with any element (e.g. a toggle) on the right of the header.
 pub(crate) fn panel_el(accent: u32, title: impl Into<SharedString>, right: AnyElement, alert: bool) -> Div {
+    panel_logo(accent, None, title, right, alert)
+}
+
+/// Panel whose header starts with a brand mark.
+pub(crate) fn panel_logo(accent: u32, logo: Option<AnyElement>, title: impl Into<SharedString>, right: AnyElement, alert: bool) -> Div {
     div()
         .relative()
         .flex()
@@ -105,6 +110,8 @@ pub(crate) fn panel_el(accent: u32, title: impl Into<SharedString>, right: AnyEl
                 .flex()
                 .items_center()
                 .mb(px(12.))
+                .gap(px(8.))
+                .children(logo)
                 .child(div().flex_1().min_w_0().font_family(NUM_FONT).font_weight(FontWeight::SEMIBOLD).text_size(px(11.5)).child(title.into()))
                 .child(div().ml(px(8.)).child(right)),
         )

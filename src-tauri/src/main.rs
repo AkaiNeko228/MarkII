@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use markii_core::{alerts::Config, lhm, pcinfo, ram, Collector};
+use markii_core::{alerts::Config, brands, lhm, pcinfo, ram, Collector};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -71,6 +71,19 @@ fn ram_layout(st: State<Arc<Shared>>) -> Option<RamLayout> {
     st.pc.lock().unwrap().as_ref().map(|pc| RamLayout { slots: ram::slots(pc), mode: ram::channel_mode(pc) })
 }
 
+/// Brand logos for the CPU, the monitored GPU (`gpu`, from telemetry), the
+/// motherboard and each memory module.
+#[tauri::command]
+fn get_brands(st: State<Arc<Shared>>, gpu: String) -> Option<brands::Brands> {
+    st.pc.lock().unwrap().as_ref().map(|pc| {
+        let mut b = brands::detect(pc);
+        if !gpu.is_empty() {
+            b.gpu = brands::gpu(&gpu);
+        }
+        b
+    })
+}
+
 #[tauri::command]
 fn test_alert(app: tauri::AppHandle) -> Result<(), String> {
     app.notification()
@@ -118,7 +131,7 @@ fn show_main(app: &tauri::AppHandle) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_config, save_config, set_interval, test_alert, get_pcinfo, sensors_start, sensors_install, ram_layout])
+        .invoke_handler(tauri::generate_handler![get_config, save_config, set_interval, test_alert, get_pcinfo, sensors_start, sensors_install, ram_layout, get_brands])
         .on_window_event(|w, ev| {
             if let WindowEvent::CloseRequested { api, .. } = ev {
                 let st = w.app_handle().state::<Arc<Shared>>();

@@ -2,6 +2,7 @@
 //! Front ends (GPUI, Tauri) create a [`Collector`] and call [`Collector::sample`] on a timer.
 
 pub mod alerts;
+pub mod brands;
 pub mod cpufreq;
 pub mod hw;
 pub mod hwinfo;
@@ -181,6 +182,26 @@ fn merge_gpu(mut g: GpuT, s: Option<&hw::Gpu>) -> GpuT {
     g.voltage = s.voltage;
     g.fan_rpm = s.fan_rpm;
     g
+}
+
+/// Which logical threads belong to each physical core. Windows numbers the two
+/// threads of an SMT core next to each other and lists SMT cores first (hybrid
+/// Intel: P-cores with Hyper-Threading, then single-thread E-cores).
+pub fn thread_map(cores: usize, threads: usize) -> Vec<Vec<usize>> {
+    if cores == 0 || threads == 0 {
+        return Vec::new();
+    }
+    let cores = cores.min(threads);
+    let extra = (threads - cores).min(cores);
+    let mut t = 0;
+    (0..cores)
+        .map(|c| {
+            let n = if c < extra { 2 } else { 1 };
+            let v: Vec<usize> = (t..t + n).collect();
+            t += n;
+            v
+        })
+        .collect()
 }
 
 pub fn pct(u: u64, tot: u64) -> Option<f64> {
@@ -431,5 +452,17 @@ impl Collector {
         let (active, fire) = self.engine.step(cfg, checks);
         t.alerts = active;
         (t, fire)
+    }
+}
+
+#[cfg(test)]
+mod map_tests {
+    #[test]
+    fn maps() {
+        assert_eq!(super::thread_map(8, 8), (0..8).map(|i| vec![i]).collect::<Vec<_>>());
+        assert_eq!(super::thread_map(2, 4), vec![vec![0, 1], vec![2, 3]]);
+        // 12600K: 6 P (HT) + 4 E = 16 threads
+        let m = super::thread_map(10, 16);
+        assert_eq!((m[5].clone(), m[6].clone(), m[9].clone()), (vec![10, 11], vec![12], vec![15]));
     }
 }

@@ -8,7 +8,8 @@ Tudo é lido do PC de quem está usando: nada é fixo para um modelo de CPU, GPU
 
 | Bloco | Dados | Fonte |
 |---|---|---|
-| CPU | carga por núcleo **ou** por thread (botão no painel), clock min/máx atual e da sessão | Windows |
+| Marcas | logo da marca da CPU (Intel/AMD + geração), GPU (NVIDIA, AMD Radeon, Intel Arc), placa-mãe e de cada pente de RAM | nome do hardware + código JEDEC |
+| CPU | carga por núcleo, por thread **ou os dois juntos** (botão no painel), clock min/máx atual e da sessão | Windows |
 | CPU | temperatura do pacote e por núcleo, Core max, potência (pacote e núcleos), Vcore da placa, VID pedido pela CPU e por núcleo, barramento | sensores (LHM) |
 | GPU | uso, temperatura, hotspot, memória, VRM, tensão, consumo e limite, VRAM, clocks, fan (% e rpm) | NVML + sensores |
 | Memória | uso, frequência, tipo, tensão, latência (CL-tRCD-tRP-tRAS em ciclos e ns), temperatura do pente, consumo do controlador, canais | WMI + SPD |
@@ -68,6 +69,7 @@ crates/markii-core/   coleta de dados, sem interface
   lib.rs              Collector: sysinfo + NVML + sensores + clocks reais + alertas
   lhm.rs              inicia o auxiliar (UAC), lê o pipe e mapeia os sensores do LHM
   ram.rs              latência em ciclos, mapa de slots, canais
+  brands.rs           reconhece a marca de CPU, GPU, placa-mãe e RAM; logos (Simple Icons, CC0)
   hwinfo.rs           memória compartilhada do HWiNFO (fonte alternativa)
   hw.rs               estruturas dos sensores + mapeamento do HWiNFO
   cpufreq.rs          clock real por núcleo (contadores PDH do Windows)
@@ -100,6 +102,12 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - CPU: alternar entre núcleos e threads; potência, Vcore, VID, Core max, clock mín./máx.
 - GPU compacta com hotspot, memória, VRM, tensão, consumo e clock da memória.
 - Painéis novos de Memória RAM e Placa-mãe; ventoinhas com contagem.
+
+## v0.5
+
+- Logo da marca nos painéis: CPU (Intel/AMD, com a geração ou série), GPU (NVIDIA, AMD Radeon, Intel Arc), placa-mãe (ASUS, ROG, MSI, Gigabyte...) e cada pente de RAM (Kingston, Corsair, G.Skill, HP...). Marcas sem logo livre aparecem como um selo de texto.
+- CPU: terceira opção "Ambos" mostra cada núcleo com a carga das suas threads.
+- Logos: [Simple Icons](https://simpleicons.org) (CC0). As marcas pertencem aos seus donos e só identificam o hardware.
 
 ## Próximos sprints
 

@@ -4138,7 +4138,7 @@ dependencies = [
 
 [[package]]
 name = "markii-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "nvml-wrapper",
  "regex",
@@ -4150,7 +4150,7 @@ dependencies = [
 
 [[package]]
 name = "markii-gpui"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "gpui",
  "markii-core",
@@ -4164,7 +4164,7 @@ dependencies = [
 
 [[package]]
 name = "markii-tauri"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "markii-core",
  "serde",

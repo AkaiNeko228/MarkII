@@ -71,27 +71,66 @@ function cell(k, v, col, note) {
   return `<div class="cell"><div class="sl">${k}</div><b class="${miss ? "dim" : ""}" ${!miss && col ? `style="color:${col}"` : ""}>${v}</b>${note ? `<span>${esc(note)}</span>` : ""}</div>`;
 }
 
+// ---------- brands ----------
+let brands = null, brandsGpu = null;
+// logos are the app's own embedded SVG files (Simple Icons, CC0)
+function mark(b, size) {
+  if (!b) return "";
+  if (b.svg) return `<span class="bmark" style="--s:${size}px">${b.svg}${b.tag ? `<b style="color:${b.color}">${esc(b.tag)}</b>` : ""}</span>`;
+  return b.name ? `<span class="bbadge" style="--c:${b.color}">${esc(b.name)}</span>` : "";
+}
+function loadBrands(gpu) {
+  brandsGpu = gpu;
+  invoke("get_brands", { gpu }).then((b) => {
+    if (!b) return;
+    brands = b;
+    $("cpu-logo").innerHTML = mark(b.cpu, 28);
+    $("gpu-logo").innerHTML = mark(b.gpu, 28);
+    $("board-logo").innerHTML = mark(b.board, 28);
+    if (lastT) { renderCpu(lastT); renderRam(lastT); renderBoard(lastT); }
+  });
+}
+
+// Windows numbers the two threads of an SMT core next to each other, SMT cores first.
+function threadMap(cores, threads) {
+  if (!cores || !threads) return [];
+  cores = Math.min(cores, threads);
+  const extra = Math.min(threads - cores, cores);
+  let t = 0;
+  return [...Array(cores)].map((_, c) => { const n = c < extra ? 2 : 1, v = [...Array(n)].map((_, k) => t + k); t += n; return v; });
+}
+
 // ---------- CPU ----------
 let cpuView = "cores";
-function coreTile(c, threads, hybrid) {
+function threadBars(ths) {
+  return `<div class="tbars">${ths.map((th) => `<div class="tbar" style="--c:${lcol(th.load)}"><i>T${th.idx}</i><div class="segs">${segbar(th.load, 8)}</div><em>${f0(th.load)}%</em></div>`).join("")}</div>`;
+}
+function coreTile(c, threads, hybrid, ths) {
   const hasT = c.temp != null && !threads, col = hasT ? tcol(c.temp) : lcol(c.load);
   const tag = threads ? `T${c.idx}` : hybrid ? `${c.kind}${c.idx}` : `C${c.idx}`;
   const sub = `${(c.mhz / 1000).toFixed(2)} GHz` + (!threads && c.volt != null ? ` · ${c.volt.toFixed(2)} V` : "");
   return `<div class="core" style="--c:${col}"><span class="cn">${tag}</span><span class="cl">${f0(c.load)}%</span>
     <div class="ct">${hasT ? f0(c.temp) + "°" : f0(c.load) + "%"}</div><div class="cf">${sub}</div>
-    <div class="cb">${segbar(c.load)}</div></div>`;
+    ${ths ? threadBars(ths) : `<div class="cb">${segbar(c.load)}</div>`}</div>`;
 }
 function renderCpu(t) {
   const cpu = t.cpu;
-  $("cpu-name").textContent = cpu.name.replace(/\(R\)|\(TM\)|CPU|@.*$/g, "").replace(/\s+/g, " ").trim();
+  const short = cpu.name.replace(/\(R\)|\(TM\)|CPU|@.*$/g, "").replace(/\s+/g, " ").trim();
+  const gen = (brands?.cpu?.line || "").includes(" · ") ? brands.cpu.line.split(" · ").pop() : "";
+  $("cpu-name").textContent = gen ? `${short} · ${gen}` : short;
   const physOk = cpu.phys && cpu.phys.length > 0;
-  const threads = cpuView === "threads" || !physOk;
-  document.querySelectorAll("#cpuview button").forEach((b) => b.classList.toggle("on", b.dataset.v === (threads ? "threads" : "cores")));
-  const list = threads ? cpu.cores : cpu.phys;
+  const both = cpuView === "both";
+  const threads = cpuView === "threads" || (!physOk && !both);
+  document.querySelectorAll("#cpuview button").forEach((b) => b.classList.toggle("on", b.dataset.v === (both ? "both" : threads ? "threads" : "cores")));
+  const ncores = physOk ? cpu.phys.length : pcInfo?.cpu_cores || 0;
+  const tmap = threadMap(ncores, cpu.cores.length);
+  // without sensors, build each core from its threads
+  const synth = () => tmap.map((ts, i) => { const th = ts.map((x) => cpu.cores[x]).filter(Boolean); return { idx: i, kind: "", load: th.reduce((a, x) => a + x.load, 0) / Math.max(1, th.length), mhz: Math.max(0, ...th.map((x) => x.mhz)), temp: null, volt: null }; });
+  const list = threads ? cpu.cores : physOk ? cpu.phys : synth();
   const hybrid = physOk && cpu.phys.some((c) => c.kind === "E");
-  $("die-lbl").textContent = `${physOk ? cpu.phys.length : cpu.cores.length} NÚCLEOS · ${cpu.threads || cpu.cores.length} THREADS`;
+  $("die-lbl").textContent = `${ncores || cpu.cores.length} NÚCLEOS · ${cpu.threads || cpu.cores.length} THREADS`;
   $("cores").style.setProperty("--cols", list.length <= 8 ? 2 : list.length <= 24 ? 4 : 6);
-  $("cores").innerHTML = list.map((c) => coreTile(c, threads, hybrid)).join("");
+  $("cores").innerHTML = list.map((c) => coreTile(c, threads, hybrid, both ? (tmap[c.idx] || []).map((x) => cpu.cores[x]).filter(Boolean) : null)).join("");
   $("cpu-note").hidden = physOk || cpuView !== "cores";
   $("cpu-note").textContent = "Os núcleos físicos aparecem quando os sensores completos estão ativos; mostrando threads.";
   const need = needs(t);
@@ -111,6 +150,7 @@ function renderCpu(t) {
 // ---------- GPU (compact) ----------
 function renderGpu(t) {
   const g = t.gpu;
+  if (pcInfo && g.name && brandsGpu !== g.name) loadBrands(g.name);
   const short = (g.name || "GPU").replace(/NVIDIA\s*|AMD\s*/i, "");
   $("gpu-name").textContent = short;
   $("gpu-tag2").textContent = g.vram_total ? `${gb(g.vram_total)} GB` : "";
@@ -174,7 +214,8 @@ function renderRam(t) {
   $("ram-mods").innerHTML = mods.map((m, i) => {
     const s = (t.hw.spd || [])[i], rfc = cyc(s?.trfc, mts);
     const sp = m.configured || m.speed;
-    return `<div class="row"><span class="k">${esc(m.slot)} · ${f0(m.size_gb)} GB ${esc(m.part)}</span><span class="v">${sp} MT/s${m.speed > m.configured && m.configured ? ` (suporta ${m.speed})` : ""}${rfc ? ` · tRFC ${rfc}` : ""}</span></div>`;
+    const b = brands?.ram?.[i];
+    return `<div class="row">${mark(b, 18)}<span class="k">${esc(m.slot)} · ${f0(m.size_gb)} GB ${b?.name ? esc(b.name) + " " : ""}${esc(m.part)}</span><span class="v">${sp} MT/s${m.speed > m.configured && m.configured ? ` (suporta ${m.speed})` : ""}${rfc ? ` · tRFC ${rfc}` : ""}</span></div>`;
   }).join("");
 }
 
@@ -182,7 +223,7 @@ function renderRam(t) {
 function renderBoard(t) {
   const b = t.hw.board || {}, fans = t.hw.fans || [];
   if (!pcInfo) return;
-  $("board-name").textContent = `Placa-mãe · ${pcInfo.board_maker} ${pcInfo.board}`;
+  $("board-name").textContent = `Placa-mãe · ${brands?.board?.name || pcInfo.board_maker} ${pcInfo.board}`;
   $("board-chip").textContent = b.chip || "chip de sensores não lido";
   $("slots").innerHTML = (ramLayout?.slots || []).map((s) => `<div class="slot ${s.module ? "on" : ""}"><i></i>${esc(s.name)}<small>${s.module ? f0(s.module.size_gb) + " GB" : "vazio"}</small></div>`).join("");
   const inUse = fans.filter((f) => f.rpm > 0).length;
@@ -258,6 +299,7 @@ let pcInfo = null;
 function renderPc(pc) {
   pcInfo = pc;
   invoke("ram_layout").then((l) => { if (l) ramLayout = l; });
+  loadBrands(lastT?.gpu?.name || "");
   if (!pc || pc.error) { $("pc-spec").innerHTML = `<div class="empty">${esc(pc?.error || "indisponível")}</div>`; $("pc-tag").textContent = "—"; return; }
   const generic = /^(to be filled|system manufacturer|default string|intel|)$/i.test(pc.maker.trim()) || pc.model === pc.board;
   const name = generic ? "PC montado" : `${pc.maker} ${pc.model}`;

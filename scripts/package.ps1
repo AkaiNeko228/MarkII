@@ -32,6 +32,10 @@ PawnIO_setup.exe - instalador oficial do driver PawnIO 2.2.0, sem modificacao.
 markii-sensors.exe inclui a LibreHardwareMonitorLib 0.9.6.
   Licenca: Mozilla Public License 2.0 (LibreHardwareMonitor-MPL-2.0.txt).
   Codigo-fonte: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor
+
+Logos de marcas (Intel, AMD, NVIDIA, ASUS, MSI, Corsair, Kingston...) - Simple Icons,
+  dominio publico (CC0 1.0, Simple-Icons-CC0.txt). As marcas pertencem aos seus donos
+  e sao usadas so para identificar o hardware deste PC. https://simpleicons.org
 "@
 
 function Readme($exe, $label) {
@@ -57,7 +61,7 @@ $builds = @(
     @{ name = "windows-x64";       exe = "MarkII.exe";       src = "target\release\markii.exe";       label = "GPUI (nativa)" },
     @{ name = "tauri-windows-x64"; exe = "MarkII-Tauri.exe"; src = "target\release\markii-tauri.exe"; label = "Tauri (interface web, requer WebView2)" }
 )
-$required = @("markii-sensors.exe", "PawnIO_setup.exe", "LEIA-ME.txt", "licencas\PawnIO-GPL-2.0.txt", "licencas\LibreHardwareMonitor-MPL-2.0.txt")
+$required = @("markii-sensors.exe", "PawnIO_setup.exe", "LEIA-ME.txt", "licencas\PawnIO-GPL-2.0.txt", "licencas\LibreHardwareMonitor-MPL-2.0.txt", "licencas\Simple-Icons-CC0.txt")
 
 foreach ($b in $builds) {
     $dir = "dist\v$ver\$($b.name)"
@@ -68,6 +72,7 @@ foreach ($b in $builds) {
     Copy-Item "vendor\pawnio\PawnIO_setup.exe" $dir
     Copy-Item "vendor\pawnio\COPYING.txt" "$dir\licencas\PawnIO-GPL-2.0.txt"
     Copy-Item "vendor\LibreHardwareMonitor-MPL-2.0.txt" "$dir\licencas\LibreHardwareMonitor-MPL-2.0.txt"
+    Copy-Item "crates\markii-core\assets\logos\LICENSE-CC0.md" "$dir\licencas\Simple-Icons-CC0.txt"
     [IO.File]::WriteAllText("$root\$dir\licencas\LEIA-ME-LICENCAS.txt", $licNote)
     [IO.File]::WriteAllText("$root\$dir\LEIA-ME.txt", (Readme $b.exe $b.label))
 

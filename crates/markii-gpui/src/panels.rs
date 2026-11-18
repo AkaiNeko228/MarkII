@@ -3,9 +3,60 @@
 //! nothing is specific to one model of CPU, GPU or board.
 use crate::draw;
 use crate::theme::*;
-use crate::view::{gb, label, num, panel, panel_el, row, segbar, small, Dashboard};
-use gpui::{div, prelude::*, px, AnyElement, Context, Div, FontWeight, SharedString};
-use markii_core::{lhm, ram, CoreT, Telemetry};
+use crate::view::{gb, label, num, panel, panel_logo, row, segbar, small, Dashboard};
+use gpui::{div, img, prelude::*, px, AnyElement, Context, Div, FontWeight, Image, ImageFormat, SharedString};
+use markii_core::brands::{self, Brand};
+use markii_core::{lhm, ram, thread_map, CoreT, Telemetry};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// SVG logos are parsed once and reused, so GPUI keeps its rasterised copy.
+fn logo_image(b: &Brand) -> Option<Arc<Image>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<Image>>>> = OnceLock::new();
+    let svg = b.svg.as_ref()?;
+    let k = format!("{}{}", b.key, b.color);
+    let mut m = CACHE.get_or_init(Default::default).lock().ok()?;
+    Some(m.entry(k).or_insert_with(|| Arc::new(Image::from_bytes(ImageFormat::Svg, svg.clone().into_bytes()))).clone())
+}
+
+fn hex(s: &str) -> u32 {
+    u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap_or(TEXT)
+}
+
+/// Brand logo (plus "RADEON"/"ARC" when the product line has no logo of its
+/// own), or a text badge when no free logo exists. `None` for unknown brands.
+pub(crate) fn brand_mark(b: &Brand, size: f32) -> Option<AnyElement> {
+    let col = hex(&b.color);
+    if let Some(im) = logo_image(b) {
+        return Some(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(4.))
+                .child(img(im).w(px(size)).h(px(size)).flex_none())
+                .when(!b.tag.is_empty(), |d| {
+                    d.child(div().font_family(NUM_FONT).font_weight(FontWeight::BOLD).text_size(px(size * 0.5)).text_color(c(col)).child(b.tag.clone()))
+                })
+                .into_any_element(),
+        );
+    }
+    (!b.name.is_empty()).then(|| {
+        div()
+            .flex_none()
+            .px(px(5.))
+            .py(px(1.))
+            .rounded(px(3.))
+            .border_1()
+            .border_color(ca(col, 0.5))
+            .font_family(NUM_FONT)
+            .font_weight(FontWeight::BOLD)
+            .text_size(px((size * 0.45).max(9.5)))
+            .text_color(c(col))
+            .child(b.name.to_uppercase())
+            .into_any_element()
+    })
+}
 
 fn opt(v: Option<f64>, fmt: impl Fn(f64) -> String) -> String {
     v.filter(|v| v.is_finite()).map_or("—".into(), fmt)
@@ -135,9 +186,50 @@ impl Dashboard {
         let cpu = &t.cpu;
         let view = self.cfg.lock().unwrap().cpu_view.clone();
         let phys_ok = !cpu.phys.is_empty();
-        let threads_view = view == "threads" || !phys_ok;
+        let both = view == "both";
+        let threads_view = view == "threads" || (!phys_ok && !both);
         let hybrid = cpu.phys.iter().any(|c| c.kind == "E");
-        let list: &Vec<CoreT> = if threads_view { &cpu.cores } else { &cpu.phys };
+        // physical cores and which threads each one runs
+        let ncores = if phys_ok { cpu.phys.len() } else { self.pc.as_ref().map_or(0, |p| p.cpu_cores as usize) };
+        let tmap = thread_map(ncores, cpu.cores.len());
+        let synth: Vec<CoreT>;
+        let list: &Vec<CoreT> = if threads_view {
+            &cpu.cores
+        } else if phys_ok {
+            &cpu.phys
+        } else {
+            // no sensors: build each core from its threads
+            synth = tmap
+                .iter()
+                .enumerate()
+                .map(|(i, ts)| {
+                    let th: Vec<&CoreT> = ts.iter().filter_map(|t| cpu.cores.get(*t)).collect();
+                    CoreT {
+                        idx: i,
+                        load: th.iter().map(|t| t.load).sum::<f32>() / th.len().max(1) as f32,
+                        mhz: th.iter().map(|t| t.mhz).max().unwrap_or(0),
+                        ..Default::default()
+                    }
+                })
+                .collect();
+            &synth
+        };
+        let thread_bars = |core: usize| {
+            let ts = tmap.get(core).cloned().unwrap_or_default();
+            div().flex().flex_col().gap(px(2.)).mt(px(3.)).children(ts.into_iter().filter_map(|i| cpu.cores.get(i)).map(|th| {
+                let col = load_col(Some(th.load as f64));
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .font_family(NUM_FONT)
+                    .text_size(px(9.))
+                    .text_color(c(MUTED))
+                    .child(div().w(px(20.)).child(format!("T{}", th.idx)))
+                    .child(div().flex_1().child(segbar(th.load as f64, 8, col, 3.).mt(px(0.))))
+                    .child(div().w(px(26.)).flex().justify_end().child(format!("{:.0}%", th.load)))
+            }))
+        };
         let tile = |c0: &CoreT| {
             let col = if c0.temp.is_some() && !threads_view { temp_col(c0.temp) } else { load_col(Some(c0.load as f64)) };
             let big = match (threads_view, c0.temp) {
@@ -171,7 +263,8 @@ impl Dashboard {
                 )
                 .child(num(big, 18.).text_color(c(col)))
                 .child(div().font_family(NUM_FONT).text_size(px(9.5)).text_color(c(MUTED)).child(sub))
-                .child(segbar(c0.load as f64, 10, col, 3.))
+                .when(!both, |d| d.child(segbar(c0.load as f64, 10, col, 3.)))
+                .when(both, |d| d.child(thread_bars(c0.idx)))
         };
         let per_row = match list.len() {
             0..=8 => 2,
@@ -208,7 +301,7 @@ impl Dashboard {
                     .gap(px(5.))
                     .child(div().flex().justify_center().child(label(&format!(
                         "{} núcleos · {} threads",
-                        if phys_ok { cpu.phys.len() } else { (cpu.cores.len()).max(1) },
+                        if ncores > 0 { ncores } else { cpu.cores.len().max(1) },
                         cpu.threads
                     ))))
                     .children(rows),
@@ -245,12 +338,17 @@ impl Dashboard {
                 Some(format!("sessão {}–{} GHz", ghz(cpu.session_min), ghz(cpu.session_max))),
             ))
             .when_some(cpu.bus_mhz, |d, b| d.child(stat("Barramento", format!("{b:.1} MHz"), None, None)));
-        let toggle = seg::<()>(cx, "cpuview", &[("cores", "Núcleos"), ("threads", "Threads")], if threads_view { "threads" } else { "cores" }, |this, v| {
+        let toggle = seg::<()>(cx, "cpuview", &[("cores", "Núcleos"), ("threads", "Threads"), ("both", "Ambos")], if both { "both" } else if threads_view { "threads" } else { "cores" }, |this, v| {
             let mut c0 = this.cfg.lock().unwrap();
             c0.cpu_view = v.into();
             let _ = c0.save(&this.cfg_path);
         });
-        panel_el(INDIGO, crate::view::clean_cpu(&cpu.name).to_uppercase(), toggle.into_any_element(), t.alerts.iter().any(|a| a.key == "cpu_temp"))
+        let brand = brands::cpu(&cpu.name);
+        let short = crate::view::clean_cpu(&cpu.name).to_uppercase();
+        // the model is already in the name: show only the generation / series
+        let gen_ = brand.line.rsplit(" · ").next().filter(|_| brand.line.contains(" · ")).unwrap_or("");
+        let title = if gen_.is_empty() { short } else { format!("{short} · {}", gen_.to_uppercase()) };
+        panel_logo(INDIGO, brand_mark(&brand, 28.), title, toggle.into_any_element(), t.alerts.iter().any(|a| a.key == "cpu_temp"))
             .child(div().flex().gap(px(12.)).child(die).child(side))
             .when(!phys_ok && view == "cores", |d| d.child(small("Os núcleos físicos aparecem quando os sensores completos estão ativos; mostrando threads.", DIM).mt(px(6.))))
     }
@@ -347,7 +445,10 @@ impl Dashboard {
             cell("VRAM", g.vram_used.map_or("—".into(), |u| format!("{} GB", gb(u))), None, Some(format!("{:.0}% de {} GB", used * 100.0, g.vram_total.map_or("—".into(), gb)))),
         ];
         let cap = g.error.clone();
-        panel(GREEN, short.to_uppercase(), g.vram_total.map_or(String::new(), |v| format!("{} GB", gb(v))), t.alerts.iter().any(|a| a.key == "gpu_temp"))
+        let gname = if g.name.is_empty() { self.pc.as_ref().map(|p| brands::main_gpu(&p.gpus)).unwrap_or_default() } else { g.name.clone() };
+        let brand = brands::gpu(&gname);
+        let vram_tag = div().text_size(px(12.)).text_color(c(MUTED)).child(g.vram_total.map_or(String::new(), |v| format!("{} GB", gb(v))));
+        panel_logo(GREEN, brand_mark(&brand, 28.), short.to_uppercase(), vram_tag.into_any_element(), t.alerts.iter().any(|a| a.key == "gpu_temp"))
             .child(card)
             .child(div().mt(px(8.)).child(grid(cells, 4)))
             .when_some(cap, |d, e| d.child(small(e, DIM).mt(px(6.))))
@@ -390,10 +491,12 @@ impl Dashboard {
             let extra = s
                 .and_then(|s| s.trfc.and_then(|v| ram::cycles(v, mts)).map(|rfc| format!(" · tRFC {rfc}")))
                 .unwrap_or_default();
-            row(
-                format!("{} · {:.0} GB {}", m.slot, m.size_gb, m.part),
+            let b = brands::ram(m);
+            let name = if b.name.is_empty() { String::new() } else { format!("{} ", b.name) };
+            div().flex().items_center().gap(px(8.)).children(brand_mark(&b, 18.)).child(div().flex_1().min_w_0().child(row(
+                format!("{} · {:.0} GB {name}{}", m.slot, m.size_gb, m.part),
                 format!("{} MT/s{}{extra}", if m.configured > 0 { m.configured } else { m.speed }, if m.speed > m.configured && m.configured > 0 { format!(" (suporta {})", m.speed) } else { String::new() }),
-            )
+            )))
         });
         panel(AMBER, "MEMÓRIA RAM", format!("{} · {} GB", kind, gb(t.mem.total)), t.alerts.iter().any(|a| a.key == "ram"))
             .child(
@@ -540,7 +643,10 @@ impl Dashboard {
         let named_v: Vec<_> = b.volts.iter().filter(|x| !x.label.starts_with("Voltage #")).collect();
         let unnamed = b.temps.len() - named_t.len() + b.volts.len() - named_v.len();
         let chipsub = if b.chip.is_empty() { "chip de sensores não lido".to_string() } else { b.chip.clone() };
-        panel(ORANGE, format!("PLACA-MÃE · {} {}", pc.board_maker, pc.board).to_uppercase(), chipsub, false)
+        let brand = brands::board(&pc.board_maker, &pc.board);
+        let who = if brand.name.is_empty() { pc.board_maker.clone() } else { brand.name.clone() };
+        let chip_tag = div().text_size(px(12.)).text_color(c(MUTED)).child(chipsub);
+        panel_logo(ORANGE, brand_mark(&brand, 28.), format!("PLACA-MÃE · {who} {}", pc.board).to_uppercase(), chip_tag.into_any_element(), false)
             .child(sprite)
             .child(div().mt(px(8.)).child(grid(cells, 4)))
             .when(!named_t.is_empty() || !named_v.is_empty(), |d| {
