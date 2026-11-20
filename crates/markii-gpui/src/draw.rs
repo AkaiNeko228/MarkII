@@ -204,17 +204,38 @@ pub fn cooler(kind: String, fan_angle: f32, pump_angle: f32, flow: f32) -> impl 
                     circle(window, cx, cy, 4.0 * s, c(CYAN));
                 }
                 "air" => {
-                    r(window, 40.0, 128.0, 130.0, 14.0, c(0x1a2e22));
-                    r(window, 88.0, 118.0, 34.0, 12.0, c(0x5a6472));
+                    // tower cooler seen from the front: fan clipped on the fin stack,
+                    // heatpipes out the top, base on the CPU, CPU on the board
+                    r(window, 18.0, 138.0, 174.0, 9.0, c(0x1a2e22));
+                    r(window, 78.0, 131.0, 54.0, 7.0, c(0x5a6472));
+                    r(window, 84.0, 121.0, 42.0, 10.0, c(0x8a6236));
                     for i in 0..4 {
-                        r(window, 92.5 + i as f32 * 7.0, 14.0, 3.0, 106.0, c(0xb07a3a));
+                        // heatpipe tops: copper, peeking above the fins
+                        r(window, 74.0 + i as f32 * 18.0, 4.0, 6.0, 14.0, c(0xb07a3a));
+                        r(window, 87.0 + i as f32 * 12.0, 112.0, 4.0, 10.0, c(0xb07a3a));
                     }
-                    for i in 0..22 {
-                        r(window, 70.0, 12.0 + i as f32 * 4.8, 96.0, 2.4, c(0x4a5462));
+                    r(window, 50.0, 12.0, 110.0, 102.0, c(0x1d242d));
+                    for i in 0..21 {
+                        r(window, 50.0, 13.0 + i as f32 * 4.9, 110.0, 2.2, c(0x3a4452));
                     }
-                    r(window, 16.0, 20.0, 56.0, 96.0, c(0x10151b));
-                    let (cx, cy) = p(44.0, 68.0);
-                    paint_fan(window, cx, cy, 25.0 * s, fan_angle, 0x3c4756, AMBER);
+                    // fan frame with rounded corners and mounting screws
+                    let (fx, fy) = p(57.0, 17.0);
+                    window.paint_quad(quad(
+                        Bounds { origin: point(px(fx), px(fy)), size: size(px(96.0 * s), px(92.0 * s)) },
+                        px(10.0 * s),
+                        c(0x262e39),
+                        px(1.0),
+                        h(LINE2),
+                        BorderStyle::default(),
+                    ));
+                    for (sx, sy) in [(64.0, 24.0), (146.0, 24.0), (64.0, 102.0), (146.0, 102.0)] {
+                        let (a, bb) = p(sx, sy);
+                        circle(window, a, bb, 2.2 * s, c(0x4a5462));
+                    }
+                    let (cx, cy) = p(105.0, 63.0);
+                    circle(window, cx, cy, 42.0 * s, c(0x10151b));
+                    ring(window, cx, cy, 42.0 * s, 1.0, LINE2);
+                    paint_fan(window, cx, cy, 38.0 * s, fan_angle, 0x3c4756, AMBER);
                 }
                 _ => {
                     let (a, bb) = p(55.0, 25.0);

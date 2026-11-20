@@ -168,6 +168,39 @@ fn generic_fan_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"(?i)^fan\s*#?\s*\d+$").unwrap())
 }
 
+/// Tells pumps from fans on unnamed headers by watching them over time. Speed alone is
+/// not enough: an air cooler's fan also reaches 1800+ rpm when the CPU is hot. A pump
+/// runs flat out all the time, so a header counts as one only after it was seen at pump
+/// speed with the CPU cool (fans slow down then) and never seen slow.
+#[derive(Default, Debug)]
+pub struct PumpWatch {
+    /// label -> (seconds at pump speed with the CPU cool, ever seen slow)
+    seen: std::collections::HashMap<String, (u32, bool)>,
+}
+
+impl PumpWatch {
+    const PUMP_RPM: f64 = 1750.0;
+    const SLOW_RPM: f64 = 1500.0;
+    const COOL_C: f64 = 55.0;
+    const NEEDED: u32 = 20;
+
+    pub fn update(&mut self, fans: &[Fan], cpu_temp: Option<f64>) {
+        for f in fans.iter().filter(|f| generic_fan_re().is_match(&f.label)) {
+            let e = self.seen.entry(f.label.clone()).or_default();
+            if f.rpm > 0.0 && f.rpm < Self::SLOW_RPM {
+                e.1 = true;
+            } else if f.rpm >= Self::PUMP_RPM && f.rpm <= 5500.0 && cpu_temp.is_some_and(|t| t <= Self::COOL_C) {
+                e.0 = e.0.saturating_add(1);
+            }
+        }
+    }
+
+    /// Headers that behave like a pump so far.
+    pub fn pumps(&self) -> Vec<String> {
+        self.seen.iter().filter(|(_, (n, slow))| *n >= Self::NEEDED && !*slow).map(|(l, _)| l.clone()).collect()
+    }
+}
+
 fn opt_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"(?i)\bopt\b|_opt\b").unwrap())
@@ -177,15 +210,16 @@ fn cpu_fan_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"(?i)^cpu( fan)?$|cpu_fan|cpu fan").unwrap())
 }
 
-pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) -> Cooling {
+/// `steady_pumps`: unnamed headers that `PumpWatch` saw behaving like a pump.
+pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool, steady_pumps: &[String]) -> Cooling {
     // a pump runs fast (2000-4800 rpm); a CPU_OPT header at fan speeds is a fan
     let pump = fans
         .iter()
         .find(|f| pump_re().is_match(&f.label) && f.rpm > 300.0)
         .or_else(|| fans.iter().find(|f| opt_re().is_match(&f.label) && f.rpm >= 2200.0));
-    // Unnamed headers: a pump runs flat out (~1800+ rpm; Cooler Master's are 2000 ±10%) all the time, while case and CPU
-    // fans of a normal PC stay well below that unless the CPU is very hot.
-    let unnamed_pump = fans.iter().filter(|f| generic_fan_re().is_match(&f.label) && f.rpm >= 1750.0 && f.rpm <= 5500.0).max_by(|a, b| a.rpm.total_cmp(&b.rpm));
+    // Unnamed headers: only one that kept pump speed (~1800+ rpm; Cooler Master's are
+    // 2000 ±10%) with the CPU cool, see `PumpWatch`
+    let unnamed_pump = fans.iter().filter(|f| steady_pumps.contains(&f.label) && f.rpm > 300.0).max_by(|a, b| a.rpm.total_cmp(&b.rpm));
     // Named "CPU fan" header, or — on boards whose headers are unnamed — the only one spinning.
     let spinning: Vec<&Fan> = fans.iter().filter(|f| f.rpm > 0.0).collect();
     let cpu_fan = fans
@@ -209,7 +243,7 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) 
             } else if let Some(d) = devices.first() {
                 ("water", "medium", format!("controlador de water cooler encontrado: {d}"))
             } else if let Some(p) = unnamed_pump {
-                ("water", "low", format!("“{}” gira a {:.0} rpm, rotação de bomba (a placa não diz o nome dos conectores)", p.label, p.rpm))
+                ("water", "low", format!("“{}” fica a {:.0} rpm mesmo com a CPU fria, como uma bomba (a placa não diz o nome dos conectores)", p.label, p.rpm))
             } else if let Some(f) = cpu_fan {
                 ("air", "medium", format!("ventoinha da CPU em “{}” ({:.0} rpm) e nenhuma bomba", f.label, f.rpm))
             } else if fans.iter().any(|f| f.rpm > 0.0) {
@@ -245,21 +279,36 @@ mod cooler_tests {
     #[test]
     fn opt_header_is_a_pump_only_at_pump_speed() {
         let fan = |l: &str, rpm: f64| Fan { label: l.into(), rpm, ..Default::default() };
-        let c = detect("auto", None, &[fan("CPU Fan", 1200.0), fan("CPU_OPT", 1100.0)], true);
+        let c = detect("auto", None, &[fan("CPU Fan", 1200.0), fan("CPU_OPT", 1100.0)], true, &[]);
         assert_eq!(c.kind, "air");
-        let c = detect("auto", None, &[fan("CPU Fan", 1200.0), fan("CPU_OPT", 2900.0)], true);
+        let c = detect("auto", None, &[fan("CPU Fan", 1200.0), fan("CPU_OPT", 2900.0)], true, &[]);
         assert_eq!(c.kind, "water");
     }
 
     #[test]
     fn unnamed_header_at_pump_speed_is_a_pump() {
         let fan = |l: &str, rpm: f64| Fan { label: l.into(), rpm, ..Default::default() };
-        let c = detect("auto", None, &[fan("Fan #1", 900.0), fan("Fan #2", 2650.0), fan("Fan #3", 1100.0), fan("Fan #5", 850.0)], true);
-        assert_eq!((c.kind.as_str(), c.pump_rpm), ("water", Some(2650.0)));
-        let c = detect("auto", None, &[fan("Fan #1", 700.0), fan("Fan #2", 1840.0)], true);
-        assert_eq!(c.kind, "water");
-        let c = detect("auto", None, &[fan("Fan #1", 900.0), fan("Fan #2", 1300.0), fan("Fan #3", 1100.0)], true);
-        assert_eq!(c.kind, "air");
+        // water: Fan #2 stays at pump speed while the CPU idles cool
+        let water = [fan("Fan #1", 700.0), fan("Fan #2", 1840.0), fan("Fan #3", 1100.0)];
+        let mut w = PumpWatch::default();
+        for _ in 0..25 {
+            w.update(&water, Some(44.0));
+        }
+        let c = detect("auto", None, &water, true, &w.pumps());
+        assert_eq!((c.kind.as_str(), c.pump_rpm), ("water", Some(1840.0)));
+        // air: Fan #2 reaches 1781 rpm only with the CPU hot, and slows down when it cools
+        let mut a = PumpWatch::default();
+        for _ in 0..60 {
+            a.update(&[fan("Fan #1", 900.0), fan("Fan #2", 1781.0)], Some(72.0));
+        }
+        assert!(a.pumps().is_empty());
+        let hot = [fan("Fan #1", 900.0), fan("Fan #2", 1781.0)];
+        assert_eq!(detect("auto", None, &hot, true, &a.pumps()).kind, "air");
+        for _ in 0..30 {
+            a.update(&[fan("Fan #1", 700.0), fan("Fan #2", 1760.0)], Some(54.0));
+        }
+        a.update(&[fan("Fan #1", 600.0), fan("Fan #2", 900.0)], Some(45.0));
+        assert!(a.pumps().is_empty(), "a fan that slows down is not a pump");
         for yes in ["Cooler Master Master Liquid ML240L", "MasterLiquid PL360 Flux", "ROG RYUJIN III 360", "ROG STRIX LC II 240", "AORUS WATERFORCE X 360", "Corsair iCUE LINK System Hub", "Corsair H100x RGB ELITE"] {
             assert!(is_cooler_device(yes), "{yes}");
         }

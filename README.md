@@ -184,7 +184,8 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 
 ## v0.7.4 (pré-lançamento)
 
-- **Water cooler em placas que não dão nome aos conectores** ("Fan #1", "Fan #2"...): um conector girando entre 1750 e 5500 rpm conta como bomba (palpite; as bombas da Cooler Master giram a 2000 rpm ±10%).
+- **Water cooler em placas que não dão nome aos conectores** ("Fan #1", "Fan #2"...): um conector que fica a 1750+ rpm por 20 s com a CPU fria (até 55 °C) e nunca cai abaixo de 1500 rpm conta como bomba (palpite). Ventoinhas de air cooler que só aceleram com a CPU quente não contam.
+- Novo desenho do air cooler: torre vista de frente, ventoinha presa nas aletas, heatpipes e base sobre a CPU.
 - Mais controladores reconhecidos: Cooler Master MasterLiquid, ASUS ROG Ryujin/Ryuo/Strix LC, TUF Gaming LC, AORUS Waterforce, Corsair iCUE LINK e H100x/H150x, Phanteks Glacier.
 - O log do painel VR mostra, para cada óculos/controle do SteamVR, o driver, o modelo e o que ele informa sobre a bateria (para entender controles sem bateria, como os do Pico).
 - O log passa a incluir a placa-mãe, a refrigeração detectada (e o motivo), cada ventoinha com rpm e os controladores de refrigeração encontrados.

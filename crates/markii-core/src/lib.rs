@@ -230,6 +230,7 @@ pub struct Collector {
     lhm_started: bool,
     lo: u64,
     hi: u64,
+    pumps: pcinfo::PumpWatch,
 }
 
 impl Default for Collector {
@@ -255,6 +256,7 @@ impl Collector {
             lhm_started: false,
             lo: u64::MAX,
             hi: 0,
+            pumps: pcinfo::PumpWatch::default(),
         }
     }
 
@@ -377,6 +379,8 @@ impl Collector {
         procs.truncate(6);
 
         let fans = hwsnap.as_ref().map(|h| h.fans.clone()).unwrap_or_default();
+        self.pumps.update(&fans, hc.and_then(|c| c.package));
+        let steady_pumps = self.pumps.pumps();
         let mut t = Telemetry {
             ts: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
             host: System::host_name().unwrap_or_default(),
@@ -422,7 +426,7 @@ impl Collector {
                 .collect(),
             net: NetT { rx_bps: rx as f64 / dt, tx_bps: tx as f64 / dt },
             procs,
-            cooling: pcinfo::detect(&cfg.cooling, pc, &fans, hwsnap.as_ref().is_some_and(|h| !h.fans.is_empty())),
+            cooling: pcinfo::detect(&cfg.cooling, pc, &fans, hwsnap.as_ref().is_some_and(|h| !h.fans.is_empty()), &steady_pumps),
             fans,
             hwinfo: hwinfo_err,
             alerts: Vec::new(),
