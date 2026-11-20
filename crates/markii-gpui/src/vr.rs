@@ -10,7 +10,7 @@
 //! OpenVR is used through its C function tables (openvr_capi.h, v2.15.6),
 //! loading the official openvr_api.dll / libopenvr_api.so shipped next to Mark II.
 
-use markii_core::snapshot::Snapshot;
+use markii_core::snapshot::{Snapshot, VrBattery};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,12 +21,17 @@ use std::time::{Duration, Instant};
 
 pub struct Vr {
     child: Mutex<Option<Child>>,
+    /// Last battery report from the panel process, and when it came.
+    batteries: Arc<Mutex<(Instant, Vec<VrBattery>)>>,
 }
 
 pub fn global() -> &'static Vr {
     static V: OnceLock<Vr> = OnceLock::new();
-    V.get_or_init(|| Vr { child: Mutex::new(None) })
+    V.get_or_init(|| Vr { child: Mutex::new(None), batteries: Arc::new(Mutex::new((Instant::now(), Vec::new()))) })
 }
+
+/// Prefix of the battery lines the panel process prints on stdout.
+const BATTERY_MARK: &str = "@markii-vr ";
 
 impl Vr {
     pub fn start(&self) {
@@ -46,9 +51,16 @@ impl Vr {
         *c = match cmd.spawn() {
             Ok(mut ch) => {
                 if let Some(out) = ch.stdout.take() {
+                    let bats = self.batteries.clone();
                     std::thread::spawn(move || {
                         for line in BufReader::new(out).lines() {
                             let Ok(line) = line else { break };
+                            if let Some(j) = line.strip_prefix(BATTERY_MARK) {
+                                if let Ok(v) = serde_json::from_str::<Vec<VrBattery>>(j) {
+                                    *bats.lock().unwrap() = (Instant::now(), v);
+                                }
+                                continue;
+                            }
                             markii_core::log::push_child(&line);
                         }
                     });
@@ -64,6 +76,7 @@ impl Vr {
     }
 
     pub fn stop(&self) {
+        self.batteries.lock().unwrap().1.clear();
         if let Some(mut ch) = self.child.lock().unwrap().take() {
             markii_core::log::info("modo VR desligado");
             drop(ch.stdin.take()); // EOF: the child detaches from SteamVR and exits
@@ -81,6 +94,16 @@ impl Vr {
 
     pub fn running(&self) -> bool {
         self.child.lock().unwrap().is_some()
+    }
+
+    /// Batteries of the SteamVR devices; empty when the panel is off, SteamVR is
+    /// closed or no report came in the last 30 s.
+    pub fn batteries(&self) -> Vec<VrBattery> {
+        if !self.running() {
+            return Vec::new();
+        }
+        let b = self.batteries.lock().unwrap();
+        if b.0.elapsed() > Duration::from_secs(30) { Vec::new() } else { b.1.clone() }
     }
 
     pub fn send(&self, s: &Snapshot) {
@@ -105,6 +128,18 @@ const ROLE_LEFT_HAND: i32 = 1;
 const INVALID_DEVICE: u32 = u32::MAX;
 // function-table indices (openvr_capi.h v2.15.6: IVRSystem_026, IVROverlay_028)
 const SYS_CONTROLLER_FOR_ROLE: usize = 18;
+const SYS_ROLE_FOR_DEVICE: usize = 19;
+const SYS_DEVICE_CLASS: usize = 20;
+const SYS_IS_CONNECTED: usize = 21;
+const SYS_GET_BOOL: usize = 22;
+const SYS_GET_FLOAT: usize = 23;
+const MAX_DEVICES: u32 = 64;
+const CLASS_HMD: i32 = 1;
+const CLASS_CONTROLLER: i32 = 2;
+const CLASS_TRACKER: i32 = 3;
+const PROP_IS_CHARGING: i32 = 1011;
+const PROP_BATTERY_PCT: i32 = 1012;
+const PROP_PROVIDES_BATTERY: i32 = 1026;
 const SYS_POLL_NEXT_EVENT: usize = 30;
 const SYS_ACK_QUIT: usize = 47;
 const OV_CREATE: usize = 1;
@@ -217,6 +252,48 @@ impl Session {
         }
     }
 
+    /// Battery of every connected headset / controller / tracker that reports one.
+    fn batteries(&self) -> Vec<VrBattery> {
+        let mut out = Vec::new();
+        unsafe {
+            let connected: extern "C" fn(u32) -> bool = std::mem::transmute(*self.sys.add(SYS_IS_CONNECTED));
+            let class: extern "C" fn(u32) -> i32 = std::mem::transmute(*self.sys.add(SYS_DEVICE_CLASS));
+            let role: extern "C" fn(u32) -> i32 = std::mem::transmute(*self.sys.add(SYS_ROLE_FOR_DEVICE));
+            let get_bool: extern "C" fn(u32, i32, *mut i32) -> bool = std::mem::transmute(*self.sys.add(SYS_GET_BOOL));
+            let get_float: extern "C" fn(u32, i32, *mut i32) -> f32 = std::mem::transmute(*self.sys.add(SYS_GET_FLOAT));
+            for i in 0..MAX_DEVICES {
+                if !connected(i) {
+                    continue;
+                }
+                let name = match class(i) {
+                    CLASS_HMD => "Óculos",
+                    CLASS_CONTROLLER => match role(i) {
+                        1 => "Controle esquerdo",
+                        2 => "Controle direito",
+                        _ => "Controle",
+                    },
+                    CLASS_TRACKER => "Rastreador",
+                    _ => continue,
+                };
+                let mut e = 0i32;
+                let provides = get_bool(i, PROP_PROVIDES_BATTERY, &mut e) && e == 0;
+                let mut e = 0i32;
+                let frac = get_float(i, PROP_BATTERY_PCT, &mut e);
+                // some drivers fill the percentage without the "provides" flag
+                if e != 0 || !frac.is_finite() || !(provides || frac > 0.0) {
+                    continue;
+                }
+                let mut e = 0i32;
+                let charging = get_bool(i, PROP_IS_CHARGING, &mut e) && e == 0;
+                out.push(VrBattery { name: name.into(), pct: (frac.clamp(0.0, 1.0) * 100.0).round(), charging });
+            }
+        }
+        // headset first, then left, right, others
+        let rank = |n: &str| ["Óculos", "Controle esquerdo", "Controle direito", "Controle"].iter().position(|x| *x == n).unwrap_or(9);
+        out.sort_by_key(|b| rank(&b.name));
+        out
+    }
+
     /// True when SteamVR asked to quit.
     fn quit_requested(&self) -> bool {
         unsafe {
@@ -306,6 +383,7 @@ pub fn run_overlay() -> i32 {
         let mut was_attached = false;
         let mut last_draw = Instant::now() - Duration::from_secs(5);
         let mut last_place = Instant::now() - Duration::from_secs(5);
+        let mut last_bat = Instant::now() - Duration::from_secs(60);
         while alive.load(Ordering::SeqCst) {
             if s.quit_requested() {
                 break;
@@ -318,6 +396,11 @@ pub fn run_overlay() -> i32 {
                 was_attached = s.attached;
                 markii_core::log::info(if s.attached { "painel VR: preso ao controle esquerdo" } else { "painel VR: controle esquerdo não encontrado (painel na frente do óculos)" });
             }
+            if last_bat.elapsed() >= Duration::from_secs(10) {
+                let b = s.batteries();
+                println!("{BATTERY_MARK}{}", serde_json::to_string(&b).unwrap_or_else(|_| "[]".into()));
+                last_bat = Instant::now();
+            }
             if last_draw.elapsed() >= Duration::from_millis(1000) {
                 let snap = latest.lock().unwrap().clone();
                 let mut px = render(snap.as_ref(), font.as_ref());
@@ -327,6 +410,7 @@ pub fn run_overlay() -> i32 {
             std::thread::sleep(Duration::from_millis(100));
         }
         s.shutdown();
+        println!("{BATTERY_MARK}[]");
         markii_core::log::info(if alive.load(Ordering::SeqCst) { "painel VR: o SteamVR fechou" } else { "painel VR: encerrado junto com o Mark II" });
         // SteamVR quit: wait for it to come back, or for Mark II to end
         wait(Duration::from_secs(5), &alive);
@@ -452,8 +536,28 @@ fn render(s: Option<&Snapshot>, font: Option<&ab_glyph::FontVec>) -> Vec<u8> {
         cv.text(font, "aguardando dados do Mark II…", x0, 110.0, 22.0, MUTED);
         return cv.pm.take();
     };
-    let host = if s.host.chars().count() > 24 { s.host.chars().take(24).collect::<String>() + "…" } else { s.host.clone() };
-    cv.text(font, &host, 300.0, 42.0, 18.0, MUTED);
+    if s.vr_batteries.is_empty() {
+        let host = if s.host.chars().count() > 24 { s.host.chars().take(24).collect::<String>() + "…" } else { s.host.clone() };
+        cv.text(font, &host, 300.0, 42.0, 18.0, MUTED);
+    } else {
+        // "Óculos 62%  E 80%  D 75%", red when low, cyan while charging
+        let mut x = 190.0;
+        for b in s.vr_batteries.iter().take(5) {
+            let short = match b.name.as_str() {
+                "Controle esquerdo" => "E",
+                "Controle direito" => "D",
+                "Controle" => "C",
+                "Rastreador" => "R",
+                n => n,
+            };
+            x += cv.text(font, &format!("{short} "), x, 42.0, 18.0, MUTED);
+            let col = if b.charging { CYAN } else if b.pct <= 15.0 { RED } else if b.pct <= 30.0 { AMBER } else { GREEN };
+            x += cv.text(font, &format!("{:.0}%{}", b.pct, if b.charging { "+" } else { "" }), x, 42.0, 18.0, col) + 16.0;
+            if x > W as f32 - 60.0 {
+                break;
+            }
+        }
+    }
 
     let rows: [(&str, Rgb, f64, String, String, Rgb); 3] = [
         (

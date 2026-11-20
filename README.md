@@ -170,6 +170,17 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - **App Android com 4 abas**: **Painel** (anéis de CPU/GPU/RAM no celular em pé; três colunas grandes na janela deitada do Quest/Pico), **Detalhes** (carga de cada thread, GPU, RAM, discos, ventoinhas, rede), **Este aparelho** (bateria, aquecimento, memória, armazenamento e Wi-Fi do próprio celular/óculos) e **Ajustes** (conexão, tema, enviar status ao PC, desconectar).
 - O Mark II do PC passa a enviar a carga de cada thread e o uso dos discos para o app (apps antigos continuam funcionando).
 
+## v0.7.3
+
+- **Baterias do SteamVR**: com o modo VR ligado, o Mark II lê a bateria do óculos, dos controles e dos rastreadores pelo SteamVR (a cada 10 s) e mostra num cartão "SteamVR" no PC, no topo do painel do pulso (`Óculos 62%  E 80%  D 75%`, `+` = carregando) e na aba Detalhes do app Android.
+- Correções de detecção:
+  - Dispositivos de áudio, rede e periféricos não são mais vistos como water cooler (o VoiceMeeter "VAIO" contava como "AIO"; teclados/headsets Corsair e placas Aquantia também). Agora só nomes de produtos de refrigeração líquida contam.
+  - O conector CPU_OPT só conta como bomba em rotação de bomba (≥ 2200 rpm); em rotação de ventoinha é um segundo fan do air cooler.
+  - Processadores AMD antigos (FX "Eight-Core", Athlon "Dual-Core", Phenom) não aparecem mais como Intel.
+  - Adaptadores de vídeo virtuais (Virtual Desktop, Parsec, área de trabalho remota...) não são mais escolhidos como a GPU monitorada.
+  - O indicador NVML só fica verde com uma placa NVIDIA.
+- Painel da CPU sem espaço vazio em processadores com poucos núcleos.
+
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo

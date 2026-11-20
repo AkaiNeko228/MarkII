@@ -405,7 +405,11 @@ GPU: {}
             .text_size(px(11.))
             .text_color(c(DIM))
             .child(src(if cfg!(windows) { "Windows" } else { "Linux" }, true, "carga · clocks · RAM · discos · rede"))
-            .child(src("NVML", t.gpu.error.is_none(), if t.gpu.error.is_some() { "sem GPU NVIDIA" } else { "GPU" }))
+            // the sensor source may fill an Intel/AMD GPU after NVML failed: NVML is "on" only for NVIDIA
+            .child({
+                let nv = t.gpu.error.is_none() && t.gpu.name.to_lowercase().contains("nvidia");
+                src("NVML", nv, if nv { "GPU" } else { "sem GPU NVIDIA" })
+            })
             .child(src(
                 "Sensores",
                 t.lhm_state == "running",

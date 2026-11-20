@@ -334,6 +334,13 @@ class MainActivity : Activity() {
         if (s.vramUsed != null && s.vramTotal != null && s.vramTotal > 0) {
             barRow(box, "VRAM", s.vramUsed * 100.0 / s.vramTotal, pal.green, "${PanelView.gb(s.vramUsed)} / ${PanelView.gb(s.vramTotal)} GB")
         }
+        if (s.vrBatteries.isNotEmpty()) {
+            section(box, "SteamVR")
+            for ((name, pct, charging) in s.vrBatteries) {
+                val col = if (pct <= 15) pal.red else if (pct <= 30) pal.amber else pal.green
+                barRow(box, if (charging) "$name · carregando" else name, pct, col, "%.0f%%".format(pct))
+            }
+        }
         section(box, "Memória")
         barRow(box, "RAM", s.ramPct, pal.amber, "${PanelView.gb(s.ramUsed)} / ${PanelView.gb(s.ramTotal)} GB")
         if (s.disks.isNotEmpty()) {

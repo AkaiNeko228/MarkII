@@ -135,6 +135,10 @@ fn main() {
             ram_used: 19_000_000_000,
             ram_total: 34_359_738_368,
             fans: vec![("CPU Fan".into(), 1180.0), ("System Fan #1".into(), 950.0), ("Pump".into(), 2400.0)],
+            vr_batteries: [("Óculos", 62.0, false), ("Controle esquerdo", 14.0, false), ("Controle direito", 80.0, true)]
+                .into_iter()
+                .map(|(n, p, c)| markii_core::snapshot::VrBattery { name: n.into(), pct: p, charging: c })
+                .collect(),
             ..Default::default()
         };
         let _ = vr::preview_png(std::path::Path::new(&out), &s);
@@ -177,7 +181,8 @@ fn main() {
                 let vr_on = vr::global().running();
                 let remote_on = markii_core::remote::global().running();
                 if vr_on || remote_on {
-                    let snap = markii_core::snapshot::Snapshot::from(&sample.0);
+                    let mut snap = markii_core::snapshot::Snapshot::from(&sample.0);
+                    snap.vr_batteries = vr::global().batteries();
                     if vr_on {
                         vr::global().send(&snap);
                     }

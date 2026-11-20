@@ -79,6 +79,8 @@ data class Snap(
     val cores: List<Double> = emptyList(),
     /** (drive, used, total) */
     val disks: List<Triple<String, Long, Long>> = emptyList(),
+    /** SteamVR batteries: (name, percent, charging) (PC v0.7.3+). */
+    val vrBatteries: List<Triple<String, Double, Boolean>> = emptyList(),
 ) {
     val ramPct: Double get() = if (ramTotal > 0) ramUsed * 100.0 / ramTotal else 0.0
 
@@ -101,6 +103,13 @@ data class Snap(
                 for (i in 0 until a.length()) {
                     val d = a.optJSONArray(i) ?: continue
                     disks.add(Triple(d.optString(0), d.optLong(1), d.optLong(2)))
+                }
+            }
+            val vrb = mutableListOf<Triple<String, Double, Boolean>>()
+            (j.optJSONArray("vr_batteries") ?: JSONArray()).let { a ->
+                for (i in 0 until a.length()) {
+                    val b = a.optJSONObject(i) ?: continue
+                    vrb.add(Triple(b.optString("name"), b.optDouble("pct", 0.0), b.optBoolean("charging")))
                 }
             }
             val alerts = mutableListOf<String>()
@@ -130,6 +139,7 @@ data class Snap(
                 alerts = alerts,
                 cores = cores,
                 disks = disks,
+                vrBatteries = vrb,
             )
         }
     }

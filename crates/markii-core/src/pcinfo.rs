@@ -85,7 +85,7 @@ $ram=Get-CimInstance Win32_PhysicalMemory | ForEach-Object { [pscustomobject]@{s
 $arr=@(Get-CimInstance Win32_PhysicalMemoryArray | Where-Object { $_.Use -eq 3 }); $slots=($arr | Measure-Object MemoryDevices -Sum).Sum; $maxkb=($arr | Measure-Object MaxCapacityEx -Sum).Sum
 $rgb=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'RGB|Aura|Mystic Light|Polychrome|LED Controller|Lighting|Chroma|ENE |Spectrix|Fusion|iCUE' -and $_.Name -notmatch 'Audio|Display|Monitor' } | Select-Object -ExpandProperty Name -Unique
 $disks=Get-PhysicalDisk | ForEach-Object { [pscustomobject]@{model=([string]$_.FriendlyName).Trim(); size_gb=[math]::Round($_.Size/1GB); media=[string]$_.MediaType; bus=[string]$_.BusType} }
-$cool=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|CoreLiquid|Cooler Master|Aqua|Arctic|EKWB|Thermaltake|Riing|Pump' } | Select-Object -ExpandProperty Name -Unique
+$cool=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water' -and $_.PNPClass -notin @('AudioEndpoint','MEDIA','Net','Keyboard','Mouse','Display','Monitor','SoftwareDevice','Image','Camera','Bluetooth','Printer') } | Select-Object -ExpandProperty Name -Unique
 [pscustomobject]@{
  maker=[string]$cs.Manufacturer; model=[string]$cs.Model; board_maker=[string]$bb.Manufacturer; board=[string]$bb.Product; board_version=[string]$bb.Version; ram_slots=[int]$slots; ram_max_gb=[math]::Round($maxkb/1MB); rgb_devices=@($rgb)
  bios=("{0} {1}" -f $bi.Manufacturer,$bi.SMBIOSBIOSVersion).Trim(); os=[string]$os.Caption; os_build=("{0} build {1}" -f $os.Version,$os.BuildNumber)
@@ -113,10 +113,12 @@ pub fn collect() -> PcInfo {
     match cmd.output() {
         Ok(o) => {
             let s = String::from_utf8_lossy(&o.stdout);
-            serde_json::from_str::<PcInfo>(s.trim()).unwrap_or_else(|e| PcInfo {
+            let mut info = serde_json::from_str::<PcInfo>(s.trim()).unwrap_or_else(|e| PcInfo {
                 error: Some(format!("não foi possível ler as informações do sistema: {e}")),
                 ..Default::default()
-            })
+            });
+            info.cooling_devices.retain(|d| is_cooler_device(d));
+            info
         }
         Err(e) => PcInfo { error: Some(e.to_string()), ..Default::default() },
     }
@@ -134,9 +136,33 @@ pub struct Cooling {
     pub fans: Vec<Fan>,
 }
 
+/// USB devices that really are liquid-cooling controllers. Brand names alone are not
+/// enough (Corsair / Cooler Master / Thermaltake also make mice, keyboards, headsets and
+/// air coolers; "AIO" hides inside "VoiceMeeter VAIO" and Sony VAIO; "Aqua" inside the
+/// Aquantia network chip), so match product lines and whole words.
+pub fn is_cooler_device(name: &str) -> bool {
+    static R: OnceLock<Regex> = OnceLock::new();
+    let re = R.get_or_init(|| {
+        Regex::new(concat!(
+            r"(?i)\bkraken\b|\bhydro (series|x)\b|\bcapellix\b|\bcommander core\b|\bh\d{2,3}i\b|",
+            r"\bgalahad\b|\basetek\b|\bcoreliquid\b|\bmasterliquid\b|\bliquid ?freezer\b|\bliquid ?cool|\bwater ?cool|",
+            r"\baio\b|\bpump\b|\bek-?(aio|nucleus)\b|\baquacomputer\b|\baquaero\b|\bd5 next\b|\btoughliquid\b|\bfloe\b|",
+            r"\bdeepcool (ls|lt|le|castle|mystique|captain)\d*"
+        ))
+        .unwrap()
+    });
+    re.is_match(name)
+}
+
+/// Fan headers that carry a pump. "OPT" (CPU_OPT) is often a second air-cooler fan, so
+/// it counts only at pump speeds (see `detect`).
 fn pump_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(?i)pump|aio|w_pump|opt").unwrap())
+    R.get_or_init(|| Regex::new(r"(?i)pump|\baio\b|w_pump").unwrap())
+}
+fn opt_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"(?i)\bopt\b|_opt\b").unwrap())
 }
 fn cpu_fan_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -144,7 +170,11 @@ fn cpu_fan_re() -> &'static Regex {
 }
 
 pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) -> Cooling {
-    let pump = fans.iter().find(|f| pump_re().is_match(&f.label) && f.rpm > 300.0);
+    // a pump runs fast (2000-4800 rpm); a CPU_OPT header at fan speeds is a fan
+    let pump = fans
+        .iter()
+        .find(|f| pump_re().is_match(&f.label) && f.rpm > 300.0)
+        .or_else(|| fans.iter().find(|f| opt_re().is_match(&f.label) && f.rpm >= 2200.0));
     // Named "CPU fan" header, or — on boards whose headers are unnamed — the only one spinning.
     let spinning: Vec<&Fan> = fans.iter().filter(|f| f.rpm > 0.0).collect();
     let cpu_fan = fans
@@ -183,4 +213,28 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) 
     c.confidence = conf.into();
     c.reason = reason;
     c
+}
+
+#[cfg(test)]
+mod cooler_tests {
+    use super::*;
+
+    #[test]
+    fn cooler_devices_without_false_positives() {
+        for yes in ["NZXT Kraken X63", "Corsair iCUE H150i ELITE CAPELLIX", "iCUE COMMANDER CORE", "ASUS AIO Pump", "Lian Li Galahad AIO", "ARCTIC Liquid Freezer II", "DeepCool LS720", "MSI MAG CoreLiquid 240R"] {
+            assert!(is_cooler_device(yes), "{yes}");
+        }
+        for no in ["VB-Audio VoiceMeeter VAIO", "VoiceMeeter Aux VAIO", "Corsair K70 RGB Keyboard", "Corsair HS80 Headset", "Aquantia AQtion 10Gbit Network Adapter", "ARCTIC P12 PWM", "Cooler Master MM711", "Thermaltake Level 20 Mouse", "Sony VAIO"] {
+            assert!(!is_cooler_device(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn opt_header_is_a_pump_only_at_pump_speed() {
+        let fan = |l: &str, rpm: f64| Fan { label: l.into(), rpm, ..Default::default() };
+        let c = detect("auto", None, &[fan("CPU Fan", 1200.0), fan("CPU_OPT", 1100.0)], true);
+        assert_eq!(c.kind, "air");
+        let c = detect("auto", None, &[fan("CPU Fan", 1200.0), fan("CPU_OPT", 2900.0)], true);
+        assert_eq!(c.kind, "water");
+    }
 }

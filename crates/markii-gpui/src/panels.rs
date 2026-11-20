@@ -327,9 +327,14 @@ impl Dashboard {
             .rounded(px(4.))
             .bg(c(0x152a1e))
             .p(px(6.))
+            // the die stretches to the stats column's height: the inner box fills it and
+            // centers the cores, instead of leaving an empty block under 2-4 cores
+            .flex()
+            .flex_col()
             .child(div().h(px(4.)).mx(px(2.)).mb(px(6.)).bg(ca(0xc9a227, 0.5)))
             .child(
                 div()
+                    .flex_1()
                     .border_1()
                     .border_color(c(0x5a6472))
                     .rounded(px(3.))
@@ -337,6 +342,7 @@ impl Dashboard {
                     .p(px(7.))
                     .flex()
                     .flex_col()
+                    .justify_center()
                     .gap(px(5.))
                     .child(div().flex().justify_center().child(label(&format!(
                         "{} núcleos · {} threads",
@@ -865,9 +871,28 @@ impl Dashboard {
     /// last seconds (battery, heat, Wi-Fi...). None when nothing is connected.
     pub(crate) fn devices_panel(&self) -> Option<Div> {
         let devs = markii_core::remote::global().devices();
-        if devs.is_empty() {
+        let vr = crate::vr::global().batteries();
+        if devs.is_empty() && vr.is_empty() {
             return None;
         }
+        let vr_panel = (!vr.is_empty()).then(|| {
+            let low = vr.iter().any(|b| b.pct <= 15.0 && !b.charging);
+            let rows = vr.into_iter().map(|b| {
+                let col = if b.pct <= 15.0 { RED } else if b.pct <= 30.0 { ORANGE } else { GREEN };
+                div()
+                    .mt(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .text_size(px(12.5))
+                            .child(div().text_color(c(MUTED)).child(if b.charging { format!("{} · carregando", b.name) } else { b.name }))
+                            .child(num(format!("{:.0}%", b.pct), 15.).text_color(c(col))),
+                    )
+                    .child(segbar(b.pct as f64, 30, col, 5.))
+            });
+            panel(CYAN, "STEAMVR", "baterias".to_string(), low).children(rows)
+        });
         let panels = devs.into_iter().map(|d| {
             let bat = d.battery;
             let bat_col = match bat {
@@ -936,6 +961,6 @@ impl Dashboard {
                 .child(segbar(bat.unwrap_or(0.0), 30, bat_col, 6.))
                 .child(div().mt(px(10.)).child(grid(cells, 3)))
         });
-        Some(div().flex().gap(px(12.)).children(panels.map(|p| p.flex_1())))
+        Some(div().flex().gap(px(12.)).children(panels.map(|p| p.flex_1())).children(vr_panel.map(|p| p.flex_1())))
     }
 }

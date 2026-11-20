@@ -37,6 +37,19 @@ pub struct Snapshot {
     /// (drive, used bytes, total bytes), e.g. ("C:", ...) (v0.7.2+).
     #[serde(default)]
     pub disks: Vec<(String, u64, u64)>,
+    /// Batteries SteamVR reports (headset, controllers, trackers) (v0.7.3+).
+    #[serde(default)]
+    pub vr_batteries: Vec<VrBattery>,
+}
+
+/// One SteamVR device with a battery.
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct VrBattery {
+    /// "Óculos", "Controle esquerdo", "Controle direito", "Controle", "Rastreador"
+    pub name: String,
+    /// 0-100
+    pub pct: f32,
+    pub charging: bool,
 }
 
 impl Snapshot {
@@ -76,6 +89,7 @@ impl Snapshot {
                     (if m.is_empty() { d.name.clone() } else { m.to_string() }, d.used, d.total)
                 })
                 .collect(),
+            vr_batteries: Vec::new(),
         }
     }
 
