@@ -398,7 +398,7 @@ pub fn openrgb_path() -> Option<PathBuf> {
         return Some(p);
     }
     #[cfg(windows)]
-    let rel = ["openrgb/OpenRGB.exe", "OpenRGB.exe"];
+    let rel = ["openrgb/OpenRGB.exe", "OpenRGB.exe", "OpenRGB Windows 64-bit/OpenRGB.exe"];
     #[cfg(not(windows))]
     let rel = ["OpenRGB.AppImage", "openrgb/OpenRGB.AppImage"];
     let d = crate::lhm::exe_dir()?;
@@ -447,40 +447,46 @@ impl Rgb {
             st.status = Status::Starting;
         }
         std::thread::spawn(move || {
-            if Client::connect(PORT).is_err() {
-                if let Err(e) = self.launch(admin) {
-                    self.set(e);
-                    return;
-                }
-            }
-            // device detection runs inside OpenRGB; wait until the list settles
-            let t0 = Instant::now();
-            let mut last = (usize::MAX, Instant::now());
-            while t0.elapsed() < Duration::from_secs(40) {
-                std::thread::sleep(Duration::from_millis(700));
-                let Ok(mut c) = Client::connect(PORT) else { continue };
-                match c.devices() {
-                    Ok(d) => {
-                        let n = d.len();
-                        self.st.lock().unwrap().devices = d;
-                        if n != last.0 {
-                            last = (n, Instant::now());
-                        } else if last.1.elapsed() > Duration::from_secs(4) {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        self.set(Status::Failed(e));
-                        return;
-                    }
-                }
-            }
-            self.set(if t0.elapsed() >= Duration::from_secs(40) && last.0 == usize::MAX {
-                Status::Failed("o OpenRGB não respondeu".into())
-            } else {
-                Status::Running
-            });
+            let s = self.bring_up(admin, |_| false);
+            self.set(s);
         });
+    }
+
+    /// Connects to (or launches) OpenRGB and waits for device detection: until the
+    /// list stops growing for 4 s, or until `done(devices)` says enough was found.
+    fn bring_up(&self, admin: bool, done: impl Fn(&[Device]) -> bool) -> Status {
+        if Client::connect(PORT).is_err() {
+            if let Err(e) = self.launch(admin) {
+                return e;
+            }
+        }
+        let t0 = Instant::now();
+        let mut last = (usize::MAX, Instant::now());
+        while t0.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_millis(700));
+            let Ok(mut c) = Client::connect(PORT) else { continue };
+            match c.devices() {
+                Ok(d) => {
+                    let n = d.len();
+                    let enough = done(&d);
+                    self.st.lock().unwrap().devices = d;
+                    if enough {
+                        return Status::Running;
+                    }
+                    if n != last.0 {
+                        last = (n, Instant::now());
+                    } else if n > 0 && last.1.elapsed() > Duration::from_secs(4) {
+                        return Status::Running;
+                    }
+                }
+                Err(e) => return Status::Failed(e),
+            }
+        }
+        if last.0 == usize::MAX {
+            Status::Failed("o OpenRGB não respondeu".into())
+        } else {
+            Status::Running
+        }
     }
 
     fn launch(&self, admin: bool) -> Result<(), Status> {
@@ -569,6 +575,92 @@ fn spawn(exe: &std::path::Path, args: &[&str]) -> Result<windows_sys::Win32::Fou
     Ok(child.into_raw_handle() as _)
 }
 
+// ---------------------------------------------------------------- saved colors
+
+/// What Mark II reapplies at login, one entry per device.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Saved {
+    pub name: String,
+    pub location: String,
+    /// effect by name (indices can change between OpenRGB versions)
+    pub mode: String,
+    /// 0xRRGGBB
+    pub color: u32,
+    pub brightness: u8,
+}
+
+/// `%APPDATA%\com.akaineko.markii\rgb.json` (Linux: `~/.config/com.akaineko.markii/rgb.json`).
+pub fn saved_path() -> PathBuf {
+    config_dir().parent().map(|p| p.join("rgb.json")).unwrap_or_else(|| PathBuf::from("rgb.json"))
+}
+
+pub fn load_saved() -> Vec<Saved> {
+    std::fs::read_to_string(saved_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+/// Remembers these devices' settings (replacing older entries for the same device).
+pub fn remember(new: &[Saved]) -> Result<(), String> {
+    let mut all = load_saved();
+    all.retain(|o| !new.iter().any(|n| n.name == o.name && n.location == o.location));
+    all.extend_from_slice(new);
+    let p = saved_path();
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    std::fs::write(&p, serde_json::to_string_pretty(&all).unwrap()).map_err(|e| e.to_string())
+}
+
+fn find<'a>(devs: &'a [Device], s: &Saved) -> Option<&'a Device> {
+    devs.iter().find(|d| d.name == s.name && d.location == s.location).or_else(|| devs.iter().find(|d| d.name == s.name))
+}
+
+/// `markii --apply-rgb` (the login entry): starts OpenRGB, applies rgb.json, closes
+/// OpenRGB and returns. Nothing keeps running. Each run is logged to rgb-login.log.
+pub fn apply_saved() -> Result<String, String> {
+    let saved = load_saved();
+    let r = (|| {
+        if saved.is_empty() {
+            return Err("nenhuma cor salva".to_string());
+        }
+        let g = global();
+        // wait until every saved device shows up (or detection settles / 60 s)
+        match g.bring_up(false, |d| saved.iter().all(|s| find(d, s).is_some())) {
+            Status::Running => {}
+            other => return Err(other.text()),
+        }
+        let devs = g.devices();
+        let mut c = Client::connect(PORT)?;
+        let mut done = Vec::new();
+        for s in &saved {
+            let Some(d) = find(&devs, s) else {
+                done.push(format!("{}: não encontrado", s.name));
+                continue;
+            };
+            let m = d.modes.iter().position(|m| m.name == s.mode).unwrap_or_else(|| default_mode(d));
+            match c.apply(d, m, s.color, s.brightness, false) {
+                Ok(()) => done.push(format!("{}: #{:06X} {}", s.name, s.color, s.mode)),
+                Err(e) => done.push(format!("{}: {e}", s.name)),
+            }
+        }
+        // give the devices a moment to latch before OpenRGB goes away
+        std::thread::sleep(Duration::from_millis(1500));
+        Ok(done.join("; "))
+    })();
+    global().stop();
+    let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let line = match &r {
+        Ok(s) => format!("{when} ok: {s}\n"),
+        Err(e) => format!("{when} erro: {e}\n"),
+    };
+    let log = saved_path().with_file_name("rgb-login.log");
+    let old = std::fs::read_to_string(&log).unwrap_or_default();
+    let mut lines: Vec<&str> = old.lines().collect();
+    let skip = lines.len().saturating_sub(30);
+    lines.drain(..skip);
+    let _ = std::fs::write(&log, lines.iter().map(|l| format!("{l}\n")).collect::<String>() + &line);
+    r
+}
+
 // ---------------------------------------------------------------- apply at login
 
 #[cfg(windows)]
@@ -600,16 +692,18 @@ fn autostart_file() -> Option<PathBuf> {
     Some(base.join("autostart").join("markii-rgb.desktop"))
 }
 
-/// Saves the current setup as the "MarkII" profile and makes OpenRGB apply it
-/// at every login, without Mark II open. Windows asks for UAC once (the task
-/// runs with highest privileges so RAM/GPU over SMBus work at login).
-pub fn enable_autostart(c: &mut Client) -> Result<(), String> {
-    c.save_profile(PROFILE)?;
-    let exe = openrgb_path().ok_or_else(|| Status::NotShipped.text())?;
-    let cfg = config_dir().to_string_lossy().to_string();
+/// Makes the saved colors (rgb.json) come back at every login without the Mark II
+/// window: the login entry runs `markii --apply-rgb`, which starts OpenRGB, applies
+/// the colors, closes OpenRGB and exits. Windows asks for UAC once (the task runs
+/// with highest privileges so RAM/GPU over SMBus work at login).
+///
+/// OpenRGB's own profiles are not used: OpenRGB 1.1 refuses "save profile" from
+/// SDK clients, so Mark II keeps the setup itself.
+pub fn enable_autostart() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     #[cfg(windows)]
     {
-        let tr = format!("\\\"{}\\\" --profile {PROFILE} --noautoconnect --config \\\"{}\\\"", exe.display(), cfg);
+        let tr = format!("\\\"{}\\\" --apply-rgb", exe.display());
         let args = format!("/Create /F /TN \"{TASK}\" /SC ONLOGON /RL HIGHEST /DELAY 0000:20 /TR \"{tr}\"");
         let schtasks = std::path::Path::new("schtasks.exe");
         let h = crate::lhm::elevate(schtasks, &args, true).map_err(|e| if e == 1223 { "permissão de administrador recusada".to_string() } else { format!("erro {e}") })?;
@@ -623,9 +717,8 @@ pub fn enable_autostart(c: &mut Client) -> Result<(), String> {
         let f = autostart_file().ok_or("pasta de configuração não encontrada")?;
         std::fs::create_dir_all(f.parent().unwrap()).map_err(|e| e.to_string())?;
         let body = format!(
-            "[Desktop Entry]\nType=Application\nName=Mark II RGB\nComment=Aplica as cores salvas no Mark II\nExec=\"{}\" --profile {PROFILE} --noautoconnect --config \"{}\"\nTerminal=false\nX-GNOME-Autostart-Delay=15\n",
-            exe.display(),
-            cfg
+            "[Desktop Entry]\nType=Application\nName=Mark II RGB\nComment=Aplica as cores salvas no Mark II\nExec=\"{}\" --apply-rgb\nTerminal=false\nX-GNOME-Autostart-Delay=15\n",
+            exe.display()
         );
         std::fs::write(&f, body).map_err(|e| e.to_string())?;
     }

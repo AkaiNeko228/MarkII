@@ -137,6 +137,12 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - O OpenRGB roda dentro de um *job* do Windows ligado ao Mark II (`markii-sensors.exe --openrgb`): se o Mark II for fechado à força ou travar, o Windows encerra o OpenRGB junto. No Linux, o kernel faz o mesmo (`PR_SET_PDEATHSIG`).
 - A tarefa de login "Mark II RGB" só aplica o perfil e fecha o OpenRGB em seguida.
 
+## v0.6.2 (pré-lançamento)
+
+- **Cores voltam ao reiniciar o PC.** O OpenRGB 1.1 recusa "salvar perfil" vindo do SDK, então a v0.6.0/0.6.1 não tinha o que reaplicar. Agora o Mark II guarda cor, efeito e brilho de cada dispositivo em `rgb.json` (pasta de configurações) ao clicar em Aplicar, e a tarefa de login roda `MarkII.exe --apply-rgb`: sem janela, liga o OpenRGB, espera os dispositivos, reaplica, fecha o OpenRGB e sai. Cada execução fica anotada em `rgb-login.log`.
+- Botão **Excluir tarefa "Mark II RGB"** na janela de RGB.
+- A janela se ajusta à tela (no máximo 90% da largura e 80% da altura) e abre centralizada.
+
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo

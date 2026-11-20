@@ -74,6 +74,11 @@ fn tray_icon() -> Option<tray_icon::Icon> {
 }
 
 fn main() {
+    // Login entry ("Reaplicar ao ligar o PC"): apply the saved colors and exit, no window.
+    if std::env::args().any(|a| a == "--apply-rgb") {
+        let _ = markii_core::rgb::apply_saved();
+        return;
+    }
     let cfg_path = config_path();
     let cfg = Arc::new(Mutex::new(Config::load(&cfg_path)));
     theme::set_theme(&cfg.lock().unwrap().theme);
@@ -101,11 +106,23 @@ fn main() {
     }
 
     Application::new().run(move |cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1120.), px(860.)), cx);
+        // Fit the window to the screen it opens on (small or high-DPI screens would get a
+        // window bigger than the screen) and center it there.
+        let display = cx.primary_display();
+        let (dw, dh) = display
+            .as_ref()
+            .map(|d| {
+                let b = d.bounds();
+                (f32::from(b.size.width), f32::from(b.size.height))
+            })
+            .unwrap_or((1920., 1080.));
+        // the height leaves room for the taskbar and the title bar
+        let (w, h) = (1120f32.min(dw * 0.9), 860f32.min(dh * 0.8));
+        let bounds = Bounds::centered(display.map(|d| d.id()), size(px(w), px(h)), cx);
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions { title: Some("Mark II".into()), ..Default::default() }),
-            window_min_size: Some(size(px(940.), px(600.))),
+            window_min_size: Some(size(px(940f32.min(w)), px(600f32.min(h)))),
             ..Default::default()
         };
         let view = cx.new(|_| Dashboard {

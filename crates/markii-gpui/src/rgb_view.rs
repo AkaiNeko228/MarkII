@@ -102,10 +102,20 @@ impl Dashboard {
                         fails.push(format!("{}: {e}", d.name));
                     }
                 }
-                // the profile is what the login entry reapplies
-                c.save_profile(rgb::PROFILE)?;
+                // Mark II's own record (rgb.json) is what `--apply-rgb` reapplies at login
+                let saved: Vec<rgb::Saved> = devs
+                    .iter()
+                    .map(|(d, m)| rgb::Saved {
+                        name: d.name.clone(),
+                        location: d.location.clone(),
+                        mode: d.modes.get(*m).map(|x| x.name.clone()).unwrap_or_default(),
+                        color,
+                        brightness: bright,
+                    })
+                    .collect();
+                rgb::remember(&saved)?;
                 if keep {
-                    rgb::enable_autostart(&mut c)?;
+                    rgb::enable_autostart()?;
                 }
                 for (d, _) in &devs {
                     rgb::global().refresh(d.idx);
@@ -120,9 +130,9 @@ impl Dashboard {
     fn rgb_set_autostart(&mut self, on: bool) {
         let Some(ui) = self.rgb.as_ref() else { return };
         let (msg, auto) = (ui.msg.clone(), ui.autostart.clone());
-        *msg.lock().unwrap() = if on { "salvando o perfil e criando a entrada de login…".into() } else { "removendo…".into() };
+        *msg.lock().unwrap() = if on { "criando a entrada de login…".into() } else { "removendo…".into() };
         std::thread::spawn(move || {
-            let r = if on { rgb::Client::connect(rgb::PORT).and_then(|mut c| rgb::enable_autostart(&mut c)) } else { rgb::disable_autostart() };
+            let r = if on { rgb::enable_autostart() } else { rgb::disable_autostart() };
             *auto.lock().unwrap() = Some(rgb::autostart_enabled());
             *msg.lock().unwrap() = match r {
                 Ok(()) if on => "as cores serão reaplicadas ao ligar o PC, sem abrir o Mark II".into(),
@@ -424,11 +434,24 @@ impl Dashboard {
                                     .child(check(auto == Some(true)))
                                     .child(if auto.is_none() { "Reaplicar ao ligar o PC (verificando…)" } else { "Reaplicar ao ligar o PC, sem abrir o Mark II" }),
                             )
+                            .when(auto == Some(true), |d| {
+                                d.child(
+                                    div().flex().items_center().gap(px(10.)).mt(px(6.)).mb(px(4.)).child(
+                                        btn("rgb-del-task", if cfg!(windows) { "Excluir tarefa \"Mark II RGB\"" } else { "Excluir entrada de login" }, false)
+                                            .text_color(c(RED))
+                                            .hover(|s| s.bg(c(PANEL2)))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.rgb_set_autostart(false);
+                                                cx.notify();
+                                            })),
+                                    ),
+                                )
+                            })
                             .child(small(
                                 if cfg!(windows) {
-                                    "Cria a tarefa \"Mark II RGB\" no Agendador do Windows, que roda o OpenRGB uma vez no login com o perfil salvo. Pede administrador uma vez."
+                                    "Cria a tarefa \"Mark II RGB\" no Agendador do Windows, que reaplica as últimas cores aplicadas (rgb.json) no login, sem abrir a janela, e fecha em seguida. Pede administrador uma vez."
                                 } else {
-                                    "Cria ~/.config/autostart/markii-rgb.desktop, que roda o OpenRGB uma vez no login com o perfil salvo."
+                                    "Cria ~/.config/autostart/markii-rgb.desktop, que reaplica as últimas cores aplicadas (rgb.json) no login e fecha em seguida."
                                 },
                                 DIM,
                             ))
