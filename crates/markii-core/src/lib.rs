@@ -7,6 +7,7 @@ pub mod cpufreq;
 pub mod hw;
 pub mod hwinfo;
 pub mod lhm;
+pub mod log;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod pcinfo;

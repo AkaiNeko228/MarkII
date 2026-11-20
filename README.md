@@ -159,6 +159,12 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - **Temas no app Android**: Material You (cores do papel de parede, Android 12+) e os 8 temas do Mark II, no botão **Tema**.
 - O APK é assinado sempre com a mesma chave (segredo do GitHub), então as atualizações instalam por cima.
 
+## v0.7.1
+
+- **Criar log** (Configurações → Log): o Mark II guarda os eventos da sessão só na memória (sensores, RGB, painel VR, rede local, pareamento, firewall) e, quando você clica, salva `markii-log-<data>.txt` na pasta de configuração e abre a pasta. Nada é gravado sozinho; o arquivo não inclui PIN nem chaves de pareamento.
+- Janela cabe na tela também com escala de 125%/150% (notebooks): o tamanho vem da área útil do Windows, sem a barra de tarefas.
+- GPU integrada (Intel HD/UHD/Iris, APUs AMD): sem "chips de VRAM" inventados; mostra a temperatura do chip do processador, consumo, clock e "memória compartilhada".
+
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo

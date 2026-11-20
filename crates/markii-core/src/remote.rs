@@ -160,11 +160,13 @@ impl Remote {
         let listener = match bound {
             Ok(l) => l,
             Err(e) => {
+                crate::log::error(format!("rede local: não consegui abrir a porta {port}: {e}"));
                 self.inner.lock().unwrap().error = Some(format!("porta {port}: {e}"));
                 return;
             }
         };
         let _ = listener.set_nonblocking(true);
+        crate::log::info(format!("rede local ligada em {}", self.inner.lock().unwrap().address));
         let stop = Arc::new(AtomicBool::new(false));
         *self.stop.lock().unwrap() = Some(stop.clone());
         let inner = self.inner.clone();
@@ -187,6 +189,7 @@ impl Remote {
     pub fn stop(&self) {
         if let Some(s) = self.stop.lock().unwrap().take() {
             s.store(true, Ordering::SeqCst);
+            crate::log::info("rede local desligada");
         }
         let mut i = self.inner.lock().unwrap();
         i.snapshot = None;
@@ -211,6 +214,7 @@ impl Remote {
             i.tokens.clear();
             i.devices.clear();
         }
+        crate::log::info("rede local: todos os aparelhos foram desconectados");
         if let Some(f) = self.on_tokens.lock().unwrap().as_ref() {
             f(Vec::new());
         }
@@ -266,6 +270,7 @@ fn handle(mut s: TcpStream, addr: SocketAddr, inner: &Mutex<Inner>, on_tokens: O
         std::net::IpAddr::V6(ip) => ip.is_loopback(),
     };
     if !local {
+        crate::log::warn(format!("rede local: recusado {} (fora da rede local)", addr.ip()));
         return respond(&mut s, 403, r#"{"error":"somente rede local"}"#);
     }
     s.set_read_timeout(Some(Duration::from_secs(3)))?;
@@ -333,6 +338,9 @@ fn handle(mut s: TcpStream, addr: SocketAddr, inner: &Mutex<Inner>, on_tokens: O
                     i.fails = 0;
                     i.pin = new_pin();
                     i.locked_until = Some(Instant::now() + Duration::from_secs(30));
+                    crate::log::warn(format!("rede local: 5 PINs errados de {}; PIN trocado e pausa de 30 s", addr.ip()));
+                } else {
+                    crate::log::warn(format!("rede local: PIN errado de {}", addr.ip()));
                 }
                 return respond(&mut s, 401, r#"{"error":"PIN incorreto"}"#);
             }
@@ -346,6 +354,7 @@ fn handle(mut s: TcpStream, addr: SocketAddr, inner: &Mutex<Inner>, on_tokens: O
             let device: String = req.device.chars().filter(|c| !c.is_control()).take(40).collect();
             i.last_client = Some((if device.is_empty() { addr.ip().to_string() } else { device }, Instant::now()));
             let list = i.tokens.clone();
+            crate::log::info(format!("rede local: pareado {} ({})", i.last_client.as_ref().map(|c| c.0.as_str()).unwrap_or("?"), addr.ip()));
             drop(i);
             if let Some(f) = on_tokens {
                 f(list);
@@ -357,6 +366,7 @@ fn handle(mut s: TcpStream, addr: SocketAddr, inner: &Mutex<Inner>, on_tokens: O
             let mut i = inner.lock().unwrap();
             let token = bearer.as_deref().and_then(|b| (!b.is_empty()).then(|| i.tokens.iter().find(|t| same(t, b)).cloned()).flatten());
             let Some(token) = token else {
+                crate::log::warn(format!("rede local: pedido sem pareamento válido de {}", addr.ip()));
                 return respond(&mut s, 401, r#"{"error":"não pareado"}"#);
             };
             let mut name = i.last_client.as_ref().map(|(n, _)| n.clone()).unwrap_or_else(|| addr.ip().to_string());
@@ -364,6 +374,15 @@ fn handle(mut s: TcpStream, addr: SocketAddr, inner: &Mutex<Inner>, on_tokens: O
                 if let Ok(d) = serde_json::from_str::<Device>(&body) {
                     let d = d.clean(&addr.ip().to_string());
                     name = d.name.clone();
+                    let known = i.devices.iter().any(|(t, _, at)| t == &token && at.elapsed() < DEVICE_TTL);
+                    if !known {
+                        crate::log::info(format!(
+                            "rede local: {} conectado ({}) · bateria {}",
+                            d.name,
+                            addr.ip(),
+                            d.battery.map_or("?".into(), |b| format!("{b:.0}%"))
+                        ));
+                    }
                     i.devices.retain(|(t, _, at)| t != &token && at.elapsed() < DEVICE_TTL);
                     i.devices.push((token, d, Instant::now()));
                 }
@@ -464,8 +483,14 @@ pub fn allow_firewall(port: u16) -> Result<(), String> {
     );
     let h = match crate::lhm::elevate(&cmd, &args, true) {
         Ok(h) => h,
-        Err(1223) => return Err("cancelado".into()),
-        Err(e) => return Err(format!("erro {e}")),
+        Err(1223) => {
+            crate::log::warn("firewall: UAC recusado");
+            return Err("cancelado".into());
+        }
+        Err(e) => {
+            crate::log::error(format!("firewall: não consegui pedir o UAC (erro {e})"));
+            return Err(format!("erro {e}"));
+        }
     };
     let mut code = 1u32;
     if !h.is_null() {
@@ -474,7 +499,13 @@ pub fn allow_firewall(port: u16) -> Result<(), String> {
             CloseHandle(h);
         }
     }
-    if code == 0 && firewall_ok() { Ok(()) } else { Err(format!("o netsh falhou (código {code})")) }
+    if code == 0 && firewall_ok() {
+        crate::log::info(format!("firewall: Mark II liberado na porta {port} (só rede local)"));
+        Ok(())
+    } else {
+        crate::log::error(format!("firewall: o netsh falhou (código {code})"));
+        Err(format!("o netsh falhou (código {code})"))
+    }
 }
 
 #[cfg(not(windows))]

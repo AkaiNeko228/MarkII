@@ -432,7 +432,16 @@ impl Rgb {
     }
 
     fn set(&self, s: Status) {
-        self.st.lock().unwrap().status = s;
+        let mut st = self.st.lock().unwrap();
+        if st.status != s {
+            match &s {
+                Status::Running => crate::log::info(format!("RGB: OpenRGB pronto, {} dispositivo(s)", st.devices.len())),
+                Status::NotShipped => crate::log::warn("RGB: OpenRGB não veio junto do Mark II"),
+                Status::Failed(e) => crate::log::error(format!("RGB: {e}")),
+                _ => {}
+            }
+        }
+        st.status = s;
     }
 
     /// Starts OpenRGB as a local SDK server (or connects to one already running)

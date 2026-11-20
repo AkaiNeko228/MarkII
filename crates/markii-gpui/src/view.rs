@@ -141,6 +141,58 @@ pub(crate) fn row(k: impl Into<SharedString>, v: impl Into<SharedString>) -> Div
 }
 
 impl Dashboard {
+    /// First part of "Criar log": what this PC is and how Mark II is set up.
+    pub fn log_header(&self) -> String {
+        let cfg = self.cfg.lock().unwrap().clone();
+        let t = self.t.as_ref();
+        let r = markii_core::remote::global().info();
+        let yn = |b: bool| if b { "sim" } else { "não" };
+        let mut h = format!(
+            "Mark II v{} · log criado em {}
+",
+            env!("CARGO_PKG_VERSION"),
+            markii_core::log::now()
+        );
+        h += &format!("Sistema: {} {}
+", std::env::consts::OS, sysinfo::System::long_os_version().unwrap_or_default());
+        if let Some(t) = t {
+            h += &format!("CPU: {}
+GPU: {}
+", t.cpu.name, if t.gpu.name.is_empty() { "?" } else { &t.gpu.name });
+            h += &format!("RAM: {} GB
+", crate::view::gb(t.mem.total));
+        }
+        h += &format!("Sensores: {:?}
+", markii_core::lhm::global().status());
+        h += &format!("RGB (OpenRGB): {:?}
+", markii_core::rgb::global().status());
+        h += &format!("Modo VR: {} (processo ativo: {})
+", yn(cfg.vr_overlay), yn(crate::vr::global().running()));
+        h += &format!(
+            "Rede local: {} · ativa: {} · porta {} · {} aparelho(s) pareado(s){}{}
+",
+            yn(cfg.remote_enabled),
+            yn(r.running),
+            cfg.remote_port,
+            r.paired,
+            r.connected.map(|n| format!(" · conectado: {n}")).unwrap_or_default(),
+            r.error.map(|e| format!(" · erro: {e}")).unwrap_or_default()
+        );
+        if cfg.remote_enabled {
+            h += &format!("Firewall liberado: {}
+", yn(markii_core::remote::firewall_ok()));
+        }
+        h += &format!(
+            "Config: tema {}, intervalo {} ms, pedir administrador {}, alertas {}
+",
+            cfg.theme,
+            cfg.interval_ms,
+            yn(cfg.sensors_admin),
+            yn(cfg.alerts_enabled)
+        );
+        h
+    }
+
     /// Re-reads whether Mark II's firewall rule exists (in the background; netsh is slow-ish).
     pub fn check_fw(&self) {
         if !markii_core::remote::global().running() && !self.cfg.lock().unwrap().remote_enabled {
@@ -991,6 +1043,22 @@ impl Dashboard {
                     ))
                     .child(h3("Janela"))
                     .child(small("Fechar a janela encerra o Mark II e tudo o que ele abriu (sensores e OpenRGB); nada fica rodando em segundo plano.", MUTED))
+                    .child(h3("Log"))
+                    .child(small(
+                        "O Mark II não grava nada sozinho. \"Criar log\" salva um arquivo com o que aconteceu nesta sessão (sensores, RGB, VR, rede, firewall) para enviar a quem for ajudar. Não inclui PIN nem chaves de pareamento.",
+                        MUTED,
+                    ))
+                    .child(div().mt(px(6.)).flex().child(btn("make-log", "Criar log", false).on_click(cx.listener(|this, _, _, cx| {
+                        let header = this.log_header();
+                        this.save_msg = match markii_core::log::save_report(&header) {
+                            Ok(p) => {
+                                markii_core::log::reveal(&p);
+                                format!("log criado: {}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).into()
+                            }
+                            Err(e) => format!("não consegui criar o log: {e}").into(),
+                        };
+                        cx.notify();
+                    }))))
                     .child(
                         div()
                             .flex()

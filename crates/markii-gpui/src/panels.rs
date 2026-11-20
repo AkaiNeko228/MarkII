@@ -401,14 +401,18 @@ impl Dashboard {
             _ => 0.0,
         };
         // One memory chip per 32 bits of bus (GDDR5/6/6X/7 are x32 devices).
-        let chips = g.bus_width.map(|b| (b / 32).clamp(1, 16) as usize).unwrap_or(4);
+        // No VRAM size reported: an integrated GPU (Intel HD/UHD/Iris, AMD APU) that
+        // shares the system RAM, so there are no memory chips to draw.
+        let shared = g.vram_total.is_none() && g.bus_width.is_none();
+        let chips = if shared { 0 } else { g.bus_width.map(|b| (b / 32).clamp(1, 16) as usize).unwrap_or(4) };
         let chip = |i: usize| {
             let fill_ = (used * chips as f64 - i as f64).clamp(0.0, 1.0);
             let col = if fill_ > 0.0 { load_col(g.mem_load.map(|v| v as f64)) } else { DIM };
             div().w(px(16.)).h(px(12.)).rounded(px(1.)).border_1().border_color(ca(col, 0.6)).bg(ca(col, 0.12 + fill_ as f32 * 0.35))
         };
         let half = chips.div_ceil(2);
-        let die_col = temp_col(g.temp.map(|v| v as f64));
+        let die_t = g.temp.map(|v| v as f64).or(if shared { t.cpu.package_temp } else { None });
+        let die_col = temp_col(die_t);
         let card = div()
             .flex()
             .items_center()
@@ -438,7 +442,7 @@ impl Dashboard {
                             .flex_col()
                             .items_center()
                             .justify_center()
-                            .child(num(g.temp.map_or("—".into(), |v| format!("{v}°")), 22.).text_color(c(die_col)))
+                            .child(num(die_t.map_or("—".into(), |v| format!("{v:.0}°")), 22.).text_color(c(die_col)))
                             .child(div().font_family(NUM_FONT).text_size(px(9.5)).text_color(c(MUTED)).child(g.clock.map_or("—".into(), |v| format!("{:.2} GHz", v as f64 / 1000.0)))),
                     )
                     .child(div().flex().gap(px(4.)).children((half..chips).map(chip))),
@@ -454,7 +458,11 @@ impl Dashboard {
                     .child(num(format!("{} %", g.load.map_or("—".into(), |v| v.to_string())), 26.).text_color(c(load_col(g.load.map(|v| v as f64)))))
                     .child(segbar(g.load.unwrap_or(0) as f64, 20, GREEN, 5.))
                     .child(small(
-                        format!("VRAM {} / {} GB · {} chips{}", g.vram_used.map_or("—".into(), gb), g.vram_total.map_or("—".into(), gb), chips, g.bus_width.map_or(String::new(), |b| format!(" · {b}-bit"))),
+                        if shared {
+                            "integrada · usa a memória RAM do sistema".to_string()
+                        } else {
+                            format!("VRAM {} / {} GB · {} chips{}", g.vram_used.map_or("—".into(), gb), g.vram_total.map_or("—".into(), gb), chips, g.bus_width.map_or(String::new(), |b| format!(" · {b}-bit")))
+                        },
                         MUTED,
                     )),
             )
@@ -473,16 +481,63 @@ impl Dashboard {
             );
         let no = Some("sem sensor nesta placa".to_string());
         let t1 = |v: Option<f64>| opt(v, |v| format!("{v:.0} °C"));
-        let cells = vec![
-            cell("Temperatura", t1(g.temp.map(|v| v as f64)), Some(temp_col(g.temp.map(|v| v as f64))), None),
-            cell("Hotspot", t1(g.hotspot), Some(temp_col(g.hotspot)), if g.hotspot.is_none() { needs_sensors(t).or(no.clone()) } else { None }),
-            cell("Memória", t1(g.mem_temp), Some(temp_col(g.mem_temp)), if g.mem_temp.is_none() { no.clone() } else { None }),
-            cell("VRM", t1(g.vrm_temp), Some(temp_col(g.vrm_temp)), if g.vrm_temp.is_none() { no.clone() } else { None }),
-            cell("Consumo", opt(g.power_w, |v| format!("{v:.0} W")), None, g.power_limit_w.map(|l| format!("limite {l:.0} W"))),
-            cell("Tensão", opt(g.voltage, |v| format!("{v:.3} V")), Some(YELLOW), if g.voltage.is_none() { needs_sensors(t) } else { None }),
-            cell("Clock memória", g.mem_clock.map_or("—".into(), |v| format!("{v} MHz")), None, g.mem_load.map(|v| format!("controlador {v}%"))),
-            cell("VRAM", g.vram_used.map_or("—".into(), |u| format!("{} GB", gb(u))), None, Some(format!("{:.0}% de {} GB", used * 100.0, g.vram_total.map_or("—".into(), gb)))),
-        ];
+        // integrated GPU: same chip as the CPU (its temperature is the package's), no
+        // hotspot / memory / VRM sensors and no memory of its own
+        let die = g.temp.map(|v| v as f64).or(if shared { t.cpu.package_temp } else { None });
+        let die_note = if g.temp.is_some() {
+            None
+        } else if shared && die.is_some() {
+            Some("mesmo chip do processador".to_string())
+        } else {
+            needs_sensors(t).or(no.clone())
+        };
+        let cells = if shared {
+            vec![
+                cell("Temperatura", t1(die), Some(temp_col(die)), die_note),
+                cell("Consumo", opt(g.power_w, |v| format!("{v:.1} W")), None, g.power_limit_w.map(|l| format!("limite {l:.0} W"))),
+                cell("Clock", g.clock.map_or("—".into(), |v| format!("{v} MHz")), None, if g.clock.is_none() { needs_sensors(t) } else { None }),
+                cell("Memória", "RAM".into(), None, Some("compartilhada com o sistema".into())),
+            ]
+        } else {
+            // Memory / VRM temperatures only when the card has those sensors (most NVIDIA
+            // GDDR6 cards don't expose them); their places go to numbers it does have.
+            let mut v = vec![
+                cell("Temperatura", t1(g.temp.map(|v| v as f64)), Some(temp_col(g.temp.map(|v| v as f64))), if g.temp.is_none() { needs_sensors(t).or(no.clone()) } else { None }),
+                cell("Hotspot", t1(g.hotspot), Some(temp_col(g.hotspot)), if g.hotspot.is_none() { needs_sensors(t).or(no.clone()) } else { None }),
+            ];
+            if g.mem_temp.is_some() {
+                v.push(cell("Memória", t1(g.mem_temp), Some(temp_col(g.mem_temp)), None));
+            }
+            if g.vrm_temp.is_some() {
+                v.push(cell("VRM", t1(g.vrm_temp), Some(temp_col(g.vrm_temp)), None));
+            }
+            v.push(cell("Consumo", opt(g.power_w, |v| format!("{v:.0} W")), None, g.power_limit_w.map(|l| format!("limite {l:.0} W"))));
+            v.push(cell("Tensão", opt(g.voltage, |v| format!("{v:.3} V")), Some(YELLOW), if g.voltage.is_none() { needs_sensors(t) } else { None }));
+            v.push(cell("Clock memória", g.mem_clock.map_or("—".into(), |v| format!("{v} MHz")), None, g.mem_load.map(|v| format!("controlador {v}%"))));
+            v.push(cell("VRAM", g.vram_used.map_or("—".into(), |u| format!("{} GB", gb(u))), None, Some(format!("{:.0}% de {} GB", used * 100.0, g.vram_total.map_or("—".into(), gb)))));
+            let mut extra = vec![
+                cell("Clock núcleo", g.clock.map_or("—".into(), |v| format!("{v} MHz")), Some(CYAN), None),
+                cell(
+                    "Uso da memória",
+                    g.mem_load.map_or("—".into(), |v| format!("{v}%")),
+                    Some(load_col(g.mem_load.map(|v| v as f64))),
+                    Some("controlador de memória".into()),
+                ),
+            ]
+            .into_iter();
+            // keep the grid full (2 rows of 4): fill the missing sensors' places
+            let mut at = 2;
+            while v.len() < 8 {
+                match extra.next() {
+                    Some(c0) => {
+                        v.insert(at, c0);
+                        at += 1;
+                    }
+                    None => break,
+                }
+            }
+            v
+        };
         let cap = g.error.clone();
         let gname = if g.name.is_empty() { self.pc.as_ref().map(|p| brands::main_gpu(&p.gpus)).unwrap_or_default() } else { g.name.clone() };
         let brand = brands::gpu(&gname);

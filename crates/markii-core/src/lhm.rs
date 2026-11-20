@@ -139,6 +139,15 @@ impl Sensors {
     fn set(&self, gen: u64, s: Status) {
         let mut st = self.st.lock().unwrap();
         if st.gen == gen {
+            if st.status != s {
+                match &s {
+                    Status::Running => crate::log::info("sensores: ligados com administrador"),
+                    Status::Limited => crate::log::warn("sensores: sem administrador (UAC recusado), só GPU e discos"),
+                    Status::Installing => crate::log::info("sensores: instalando o driver PawnIO"),
+                    Status::Failed(e) => crate::log::error(format!("sensores: {e}")),
+                    _ => {}
+                }
+            }
             st.status = s;
         }
     }

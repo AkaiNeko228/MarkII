@@ -11,7 +11,7 @@
 //! loading the official openvr_api.dll / libopenvr_api.so shipped next to Mark II.
 
 use markii_core::snapshot::Snapshot;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -36,17 +36,36 @@ impl Vr {
         }
         let Ok(exe) = std::env::current_exe() else { return };
         let mut cmd = Command::new(exe);
-        cmd.arg("--vr-overlay").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        // stdout carries the panel's log lines back to Mark II
+        cmd.arg("--vr-overlay").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
-        *c = cmd.spawn().ok();
+        *c = match cmd.spawn() {
+            Ok(mut ch) => {
+                if let Some(out) = ch.stdout.take() {
+                    std::thread::spawn(move || {
+                        for line in BufReader::new(out).lines() {
+                            let Ok(line) = line else { break };
+                            markii_core::log::push_child(&line);
+                        }
+                    });
+                }
+                markii_core::log::info("modo VR ligado (painel do pulso aguardando o SteamVR)");
+                Some(ch)
+            }
+            Err(e) => {
+                markii_core::log::error(format!("modo VR: não consegui abrir o processo do painel: {e}"));
+                None
+            }
+        };
     }
 
     pub fn stop(&self) {
         if let Some(mut ch) = self.child.lock().unwrap().take() {
+            markii_core::log::info("modo VR desligado");
             drop(ch.stdin.take()); // EOF: the child detaches from SteamVR and exits
             let t0 = Instant::now();
             while t0.elapsed() < Duration::from_millis(1500) {
@@ -250,6 +269,11 @@ pub fn run_overlay() -> i32 {
         });
     }
     let font = load_font();
+    if font.is_none() {
+        markii_core::log::warn("painel VR: nenhuma fonte do sistema encontrada; o texto não vai aparecer");
+    }
+    let mut waiting_logged = false;
+    let mut last_err = String::new();
     let wait = |d: Duration, alive: &AtomicBool| {
         let t0 = Instant::now();
         while t0.elapsed() < d && alive.load(Ordering::SeqCst) {
@@ -258,13 +282,28 @@ pub fn run_overlay() -> i32 {
     };
     while alive.load(Ordering::SeqCst) {
         if !steamvr_running() {
+            if !waiting_logged {
+                markii_core::log::info("painel VR: esperando o SteamVR abrir");
+                waiting_logged = true;
+            }
             wait(Duration::from_secs(4), &alive);
             continue;
         }
-        let Ok(mut s) = Session::open() else {
-            wait(Duration::from_secs(6), &alive);
-            continue;
+        let mut s = match Session::open() {
+            Ok(s) => s,
+            Err(e) => {
+                if e != last_err {
+                    markii_core::log::error(format!("painel VR: SteamVR recusou o painel: {e}"));
+                    last_err = e;
+                }
+                wait(Duration::from_secs(6), &alive);
+                continue;
+            }
         };
+        markii_core::log::info("painel VR: conectado ao SteamVR");
+        last_err.clear();
+        waiting_logged = false;
+        let mut was_attached = false;
         let mut last_draw = Instant::now() - Duration::from_secs(5);
         let mut last_place = Instant::now() - Duration::from_secs(5);
         while alive.load(Ordering::SeqCst) {
@@ -275,6 +314,10 @@ pub fn run_overlay() -> i32 {
                 s.place();
                 last_place = Instant::now();
             }
+            if s.attached != was_attached {
+                was_attached = s.attached;
+                markii_core::log::info(if s.attached { "painel VR: preso ao controle esquerdo" } else { "painel VR: controle esquerdo não encontrado (painel na frente do óculos)" });
+            }
             if last_draw.elapsed() >= Duration::from_millis(1000) {
                 let snap = latest.lock().unwrap().clone();
                 let mut px = render(snap.as_ref(), font.as_ref());
@@ -284,6 +327,7 @@ pub fn run_overlay() -> i32 {
             std::thread::sleep(Duration::from_millis(100));
         }
         s.shutdown();
+        markii_core::log::info(if alive.load(Ordering::SeqCst) { "painel VR: o SteamVR fechou" } else { "painel VR: encerrado junto com o Mark II" });
         // SteamVR quit: wait for it to come back, or for Mark II to end
         wait(Duration::from_secs(5), &alive);
     }

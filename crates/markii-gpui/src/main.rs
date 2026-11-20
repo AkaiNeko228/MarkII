@@ -62,6 +62,21 @@ static HWND: AtomicIsize = AtomicIsize::new(0);
 
 #[cfg(windows)]
 mod win {
+    /// Usable screen area (without the taskbar) in GPUI's logical pixels: the
+    /// work area comes in physical pixels, so divide by the DPI scale (125%, 150%...).
+    pub fn work_area() -> Option<(f32, f32)> {
+        use windows_sys::Win32::Foundation::RECT;
+        use windows_sys::Win32::UI::HiDpi::GetDpiForSystem;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
+        let mut r: RECT = unsafe { std::mem::zeroed() };
+        if unsafe { SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut r as *mut _ as _, 0) } == 0 {
+            return None;
+        }
+        let scale = (unsafe { GetDpiForSystem() } as f32 / 96.0).max(1.0);
+        let (w, h) = ((r.right - r.left) as f32 / scale, (r.bottom - r.top) as f32 / scale);
+        (w > 200.0 && h > 200.0).then_some((w, h))
+    }
+
     use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW};
     pub fn show(h: isize) {
         unsafe {
@@ -95,11 +110,12 @@ fn tray_icon() -> Option<tray_icon::Icon> {
 fn main() {
     // Login entry ("Reaplicar ao ligar o PC"): apply the saved colors and exit, no window.
     if std::env::args().any(|a| a == "--apply-rgb") {
-        let _ = markii_core::rgb::apply_saved();
+        let _ = markii_core::rgb::apply_saved(); // writes rgb-login.log
         return;
     }
     // SteamVR wrist panel, started by Mark II itself (see vr.rs).
     if std::env::args().any(|a| a == "--vr-overlay") {
+        markii_core::log::init("vr");
         std::process::exit(vr::run_overlay());
     }
     // Dev check of the wrist panel drawing: markii --vr-preview out.png
@@ -124,6 +140,13 @@ fn main() {
         let _ = vr::preview_png(std::path::Path::new(&out), &s);
         return;
     }
+    markii_core::log::init("app");
+    markii_core::log::info(format!(
+        "Mark II v{} iniciado · {} {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        sysinfo::System::long_os_version().unwrap_or_default()
+    ));
     let cfg_path = config_path();
     let cfg = Arc::new(Mutex::new(Config::load(&cfg_path)));
     theme::set_theme(&cfg.lock().unwrap().theme);
@@ -180,8 +203,18 @@ fn main() {
                 (f32::from(b.size.width), f32::from(b.size.height))
             })
             .unwrap_or((1920., 1080.));
-        // the height leaves room for the taskbar and the title bar
-        let (w, h) = (1120f32.min(dw * 0.9), 860f32.min(dh * 0.8));
+        // Windows: the usable area (taskbar excluded) at the screen's scale; GPUI's display
+        // size can come in physical pixels, which made the window too big at 125%/150%
+        #[cfg(windows)]
+        let fit = win::work_area().map(|(ww, wh)| (ww.min(dw), wh.min(dh)));
+        #[cfg(not(windows))]
+        let fit: Option<(f32, f32)> = None;
+        let (w, h) = match fit {
+            // leave room for the window frame and the title bar
+            Some((ww, wh)) => (1120f32.min(ww * 0.94), 860f32.min(wh * 0.86)),
+            // the height leaves room for the taskbar and the title bar
+            None => (1120f32.min(dw * 0.9), 860f32.min(dh * 0.8)),
+        };
         let bounds = Bounds::centered(display.map(|d| d.id()), size(px(w), px(h)), cx);
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -213,6 +246,7 @@ fn main() {
             // Closing the window always ends Mark II and its helpers (OpenRGB, sensors):
             // nothing is left running in the background.
             window.on_window_should_close(cx, move |_, cx| {
+                markii_core::log::info("Mark II encerrado (janela fechada)");
                 markii_core::rgb::global().stop();
                 vr::global().stop();
                 markii_core::remote::global().stop();
@@ -291,6 +325,7 @@ fn main() {
                         #[cfg(windows)]
                         win::show(hwnd);
                     } else if ev.id == quit_id {
+                        markii_core::log::info("Mark II encerrado (bandeja → Sair)");
                         markii_core::rgb::global().stop();
                         vr::global().stop();
                         markii_core::remote::global().stop();
