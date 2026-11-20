@@ -35,7 +35,7 @@ jobs:
           MARKII_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/markii.jks"
+            printf %s "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/markii.jks"
             export MARKII_KEYSTORE="$RUNNER_TEMP/markii.jks"
           else
             echo "::warning::no signing key secret; using a throwaway debug key"
