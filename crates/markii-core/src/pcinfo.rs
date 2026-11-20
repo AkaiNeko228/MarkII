@@ -146,7 +146,7 @@ pub fn is_cooler_device(name: &str) -> bool {
         Regex::new(concat!(
             r"(?i)\bkraken\b|\bhydro (series|x)\b|\bcapellix\b|\bcommander core\b|\bicue link\b|\bh\d{2,3}[ix]\b|",
             r"\brog (ryujin|ryuo|strix lc)|\btuf gaming lc\b|\baorus (waterforce|liquid)|\bwaterforce\b|\bglacier one\b|",
-            r"\bgalahad\b|\basetek\b|\bcoreliquid\b|\bmasterliquid\b|\bliquid ?freezer\b|\bliquid ?cool|\bwater ?cool|",
+            r"\bgalahad\b|\basetek\b|\bcoreliquid\b|\bmaster ?liquid\b|\bliquid ?freezer\b|\bliquid ?cool|\bwater ?cool|",
             r"\baio\b|\bpump\b|\bek-?(aio|nucleus)\b|\baquacomputer\b|\baquaero\b|\bd5 next\b|\btoughliquid\b|\bfloe\b|",
             r"\bdeepcool (ls|lt|le|castle|mystique|captain)\d*"
         ))
@@ -183,9 +183,9 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) 
         .iter()
         .find(|f| pump_re().is_match(&f.label) && f.rpm > 300.0)
         .or_else(|| fans.iter().find(|f| opt_re().is_match(&f.label) && f.rpm >= 2200.0));
-    // Unnamed headers: a pump runs flat out (2000+ rpm) all the time, while case and CPU
+    // Unnamed headers: a pump runs flat out (~1800+ rpm; Cooler Master's are 2000 ±10%) all the time, while case and CPU
     // fans of a normal PC stay well below that unless the CPU is very hot.
-    let unnamed_pump = fans.iter().filter(|f| generic_fan_re().is_match(&f.label) && f.rpm >= 2000.0 && f.rpm <= 5500.0).max_by(|a, b| a.rpm.total_cmp(&b.rpm));
+    let unnamed_pump = fans.iter().filter(|f| generic_fan_re().is_match(&f.label) && f.rpm >= 1750.0 && f.rpm <= 5500.0).max_by(|a, b| a.rpm.total_cmp(&b.rpm));
     // Named "CPU fan" header, or — on boards whose headers are unnamed — the only one spinning.
     let spinning: Vec<&Fan> = fans.iter().filter(|f| f.rpm > 0.0).collect();
     let cpu_fan = fans
@@ -256,9 +256,11 @@ mod cooler_tests {
         let fan = |l: &str, rpm: f64| Fan { label: l.into(), rpm, ..Default::default() };
         let c = detect("auto", None, &[fan("Fan #1", 900.0), fan("Fan #2", 2650.0), fan("Fan #3", 1100.0), fan("Fan #5", 850.0)], true);
         assert_eq!((c.kind.as_str(), c.pump_rpm), ("water", Some(2650.0)));
+        let c = detect("auto", None, &[fan("Fan #1", 700.0), fan("Fan #2", 1840.0)], true);
+        assert_eq!(c.kind, "water");
         let c = detect("auto", None, &[fan("Fan #1", 900.0), fan("Fan #2", 1300.0), fan("Fan #3", 1100.0)], true);
         assert_eq!(c.kind, "air");
-        for yes in ["ROG RYUJIN III 360", "ROG STRIX LC II 240", "AORUS WATERFORCE X 360", "Corsair iCUE LINK System Hub", "Corsair H100x RGB ELITE"] {
+        for yes in ["Cooler Master Master Liquid ML240L", "MasterLiquid PL360 Flux", "ROG RYUJIN III 360", "ROG STRIX LC II 240", "AORUS WATERFORCE X 360", "Corsair iCUE LINK System Hub", "Corsair H100x RGB ELITE"] {
             assert!(is_cooler_device(yes), "{yes}");
         }
         for no in ["ROG STRIX B550-F GAMING", "TUF GAMING X570-PLUS", "AORUS ELITE", "NVIDIA H100"] {
