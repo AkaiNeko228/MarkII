@@ -27,7 +27,7 @@ pub struct Config {
     pub sensors_admin: bool,
     /// CPU panel view: "cores" | "threads" | "both"
     pub cpu_view: String,
-    /// "grafite" (default) | "roxo" | "lavanda" | "menta" (dark pastel) | "algodao" | "pistache" (light pastel)
+    /// "grafite" (default) | "roxo" | "carmesim" | "azul" (GPUI) | "lavanda" | "menta" (dark pastel) | "algodao" | "pistache" (light pastel)
     pub theme: String,
 }
 

@@ -16,6 +16,16 @@ Mark II v@VERSION@ - Linux x64 (versao nativa GPUI)
      aparecem rodando como root:  sudo ./markii
    - GPU NVIDIA: usa o driver proprietario (NVML). GPU AMD: amdgpu.
 
+4. RGB (botao "RGB" no topo): usa o OpenRGB que vem nesta pasta
+   (OpenRGB.AppImage, GPL-2.0) para memoria, placa de video, placa-mae,
+   ventoinhas e coolers. Uma vez so, para liberar o acesso ao hardware:
+     sudo ./OpenRGB.AppImage --generate-udev-rules /etc/udev/rules.d/60-openrgb.rules
+     sudo udevadm control --reload-rules && sudo udevadm trigger
+   Memoria e placa de video (SMBus): sudo modprobe i2c-dev  e, conforme a CPU,
+     sudo modprobe i2c-i801  (Intel)  ou  sudo modprobe i2c-piix4  (AMD)
+   AppImage precisa de FUSE 2 (Ubuntu 22.04+: sudo apt install libfuse2).
+   "Reaplicar ao ligar o PC" cria ~/.config/autostart/markii-rgb.desktop.
+
 Configuracoes: ~/.config/com.akaineko.markii/config.json
 No Linux nao ha icone na bandeja: fechar a janela encerra o app.
 

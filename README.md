@@ -77,11 +77,13 @@ crates/markii-core/   coleta de dados, sem interface
   linux.rs            sensores no Linux (hwmon, /proc/stat, RAPL)
   pcinfo_linux.rs     identificação do PC no Linux (/sys, lspci, dmidecode)
   alerts.rs           configuração e motor de alertas
+  rgb.rs              controle de RGB: cliente do SDK do OpenRGB, processo e reaplicar no login
 crates/markii-gpui/   app nativo GPUI
   view.rs             layout, cabeçalho, Este PC, refrigeração, temperaturas, configurações
   panels.rs           CPU (núcleos/threads), GPU, memória, placa-mãe, ventoinhas, aviso de sensores
   draw.rs             gráficos e sprites desenhados (barras, linhas, ventoinhas, coolers)
-  theme.rs            temas (grafite, roxo, pastel escuros e claros) e troca de cores
+  theme.rs            temas (grafite, roxo, carmesim, azul profundo, pastel) e troca de cores
+  rgb_view.rs         janela de controle de RGB
   main.rs             janela, bandeja, notificações, thread de coleta
 sensors/              auxiliar .NET com LibreHardwareMonitorLib (roda com admin)
 src-tauri/ + ui/      versão Tauri (interface web), usa o mesmo markii-core
@@ -119,6 +121,14 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 
 - **Linux (x64)**: versão nativa GPUI. Sensores direto do kernel (hwmon/lm-sensors), sem driver extra nem administrador; GPU NVIDIA pelo NVML e AMD pelo amdgpu. Potência da CPU (RAPL) e marca/slot de cada pente (dmidecode) só como root. Sem ícone na bandeja. O build é feito pelo GitHub Actions (`.github/workflows/linux.yml`), que anexa o `.tar.gz` ao release.
 - Correção: no GPUI os logos SVG saíam com vermelho e azul trocados (o logo da Intel aparecia laranja).
+
+## v0.6.0
+
+- **Controle de RGB** (versão GPUI, Windows e Linux): botão **RGB** no topo abre a janela com memória RAM, placa de vídeo, placa-mãe, cooler (water ou air) e ventoinhas/fitas. Escolha cor, brilho e efeito por dispositivo e clique em Aplicar.
+  - Usa o [OpenRGB](https://codeberg.org/OpenRGB/OpenRGB) 1.1 (GPL-2.0), que vem junto no zip (`openrgb/`) e no tar.gz (`OpenRGB.AppImage`); nada é baixado ao rodar. O Mark II roda o OpenRGB escondido como servidor local (127.0.0.1:6742) e conversa pelo SDK.
+  - **Cores mantidas sem abrir o app**: grava na memória do dispositivo quando ele suporta e salva o perfil "MarkII"; "Reaplicar ao ligar o PC" cria a tarefa **Mark II RGB** no Agendador do Windows (com administrador, para RAM/GPU via SMBus) ou `~/.config/autostart/markii-rgb.desktop` no Linux.
+  - Windows: RAM, GPU e placa-mãe precisam do driver PawnIO e de administrador. Linux: regras udev do OpenRGB e `i2c-dev` (veja o LEIA-ME).
+- Temas novos (só GPUI): **Carmesim** (preto com vermelho carmesim) e **Azul profundo**.
 
 ## Próximos sprints
 

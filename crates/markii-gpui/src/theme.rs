@@ -48,7 +48,7 @@ pub struct Theme {
 const ROLES_GREY: [u32; 8] = [BG, PANEL, PANEL2, LINE, LINE2, DIM, MUTED, TEXT];
 const ROLES_ACCENT: [u32; 8] = [AMBER, INDIGO, GREEN, CYAN, RED, PINK, YELLOW, ORANGE];
 
-pub const THEMES: [Theme; 6] = [
+pub const THEMES: [Theme; 8] = [
     Theme { key: "grafite", name: "Grafite", light: false, grey: ROLES_GREY, accent: ROLES_ACCENT },
     Theme {
         key: "roxo",
@@ -56,6 +56,20 @@ pub const THEMES: [Theme; 6] = [
         light: false,
         grey: [0x07060b, 0x0e0c15, 0x15121f, 0x221d33, 0x2d2643, 0x5e5577, 0x9a90b5, 0xece8f6],
         accent: [0xb57cff, 0x8f6bff, 0x5fd49a, 0x7aa8ff, 0xff5f7a, 0xe06bff, 0xf0c75e, 0xff8f6b],
+    },
+    Theme {
+        key: "carmesim",
+        name: "Carmesim",
+        light: false,
+        grey: [0x0b0708, 0x130c0e, 0x1b1114, 0x2a181c, 0x372026, 0x6e5157, 0xa88d92, 0xf2e6e8],
+        accent: [0xe0284f, 0xff6b81, 0x5fd49a, 0x6fb8e8, 0xff3b3b, 0xff7aa8, 0xf2c14e, 0xff7a45],
+    },
+    Theme {
+        key: "azul",
+        name: "Azul profundo",
+        light: false,
+        grey: [0x050a14, 0x0a1220, 0x0f1a2c, 0x17263f, 0x1f3150, 0x4d6385, 0x8ea3c4, 0xe6eefb],
+        accent: [0x3d8bff, 0x6c8cff, 0x4fd6a0, 0x4cc9f0, 0xff5a6a, 0xb48cff, 0xf2d06b, 0xff9a5a],
     },
     Theme {
         key: "lavanda",

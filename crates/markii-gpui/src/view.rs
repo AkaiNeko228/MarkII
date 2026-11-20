@@ -39,6 +39,7 @@ pub struct Dashboard {
     pub pump_angle: f32,
     pub settings: Option<Config>,
     pub save_msg: SharedString,
+    pub rgb: Option<crate::rgb_view::RgbUi>,
 }
 
 // ---------- formatting ----------
@@ -268,6 +269,24 @@ impl Dashboard {
                                 cx.notify();
                             }))
                             .child("⚙  Configurações"),
+                    )
+                    .child(
+                        div()
+                            .id("open-rgb")
+                            .px(px(12.))
+                            .py(px(6.))
+                            .border_1()
+                            .border_color(c(LINE2))
+                            .rounded(px(6.))
+                            .text_color(c(MUTED))
+                            .text_size(px(12.))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(c(TEXT)).border_color(c(MUTED)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_rgb();
+                                cx.notify();
+                            }))
+                            .child("◆  RGB"),
                     ),
             )
     }
@@ -810,7 +829,9 @@ impl Dashboard {
                             .child(stepper("cool", "Repetir a cada", s.cooldown_min.to_string(), "min", |s, d| s.cooldown_min = (s.cooldown_min as i64 + d as i64).clamp(1, 240) as u64)),
                     )
                     .child(h3("Tema"))
-                    .child(div().flex().gap(px(6.)).children((0..THEMES.len()).map(theme_opt)))
+                    .child(div().flex().flex_col().gap(px(6.)).children((0..THEMES.len().div_ceil(4)).map(|r| {
+                        div().flex().gap(px(6.)).children((r * 4..(r * 4 + 4).min(THEMES.len())).map(&theme_opt))
+                    })))
                     .child(h3("Refrigeração"))
                     .child(
                         div()
@@ -923,5 +944,6 @@ impl Render for Dashboard {
                 ),
         )
         .when_some(settings, |d, s| d.child(self.settings_sheet(&s, cx)))
+        .when(self.rgb.is_some(), |d| d.child(self.rgb_sheet(cx)))
     }
 }

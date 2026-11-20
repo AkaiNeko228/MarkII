@@ -100,12 +100,12 @@ pub fn pawnio_installed() -> bool {
     PathBuf::from(pf).join("PawnIO").join("PawnIOLib.dll").exists()
 }
 
-fn exe_dir() -> Option<PathBuf> {
+pub(crate) fn exe_dir() -> Option<PathBuf> {
     std::env::current_exe().ok()?.parent().map(|p| p.to_path_buf())
 }
 
 /// Finds a file shipped next to the app (release zip) or in the dev build tree.
-fn find_shipped(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_shipped(name: &str) -> Option<PathBuf> {
     let d = exe_dir()?;
     [
         d.join(name),
@@ -314,7 +314,7 @@ impl Sensors {
 
 /// Runs `exe args` through UAC ("runas"). Returns the process handle or the Win32 error.
 #[cfg(windows)]
-fn elevate(exe: &std::path::Path, args: &str, wait: bool) -> Result<windows_sys::Win32::Foundation::HANDLE, u32> {
+pub(crate) fn elevate(exe: &std::path::Path, args: &str, wait: bool) -> Result<windows_sys::Win32::Foundation::HANDLE, u32> {
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::System::Threading::{WaitForSingleObject, INFINITE};
     use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};

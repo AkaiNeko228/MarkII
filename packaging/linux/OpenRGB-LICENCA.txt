@@ -1,0 +1,7 @@
+OpenRGB.AppImage - OpenRGB 1.1, binario oficial sem modificacao.
+Licenca: GNU General Public License v2 (https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt).
+Inclui Qt 6 (LGPL v3), hidapi, libusb e mbedtls.
+Codigo-fonte: https://codeberg.org/OpenRGB/OpenRGB (tag release_1.1)
+Binario original: https://codeberg.org/OpenRGB/OpenRGB/releases/tag/release_1.1
+O Mark II roda o OpenRGB como programa separado e conversa com ele pelo SDK local
+(127.0.0.1:6742).

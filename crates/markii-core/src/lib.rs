@@ -13,6 +13,7 @@ pub mod pcinfo;
 #[cfg(target_os = "linux")]
 mod pcinfo_linux;
 pub mod ram;
+pub mod rgb;
 
 pub use alerts::{Active, Config};
 pub use pcinfo::{Cooling, PcInfo};

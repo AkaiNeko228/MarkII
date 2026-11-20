@@ -3,6 +3,7 @@
 
 mod draw;
 mod panels;
+mod rgb_view;
 mod theme;
 mod view;
 
@@ -121,6 +122,7 @@ fn main() {
             pump_angle: 0.0,
             settings: None,
             save_msg: "".into(),
+            rgb: None,
         });
         let v2 = view.clone();
         let cfg_close = cfg.clone();
@@ -136,6 +138,7 @@ fn main() {
                     win::hide(HWND.load(Ordering::Relaxed));
                     false
                 } else {
+                    markii_core::rgb::global().stop();
                     cx.quit();
                     true
                 }
@@ -212,6 +215,7 @@ fn main() {
                         #[cfg(windows)]
                         win::show(hwnd);
                     } else if ev.id == quit_id {
+                        markii_core::rgb::global().stop();
                         let _ = cx.update(|cx| cx.quit());
                     }
                 }

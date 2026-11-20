@@ -6,3 +6,4 @@ src-tauri/gen/
 dist/
 sensors/bin/
 sensors/obj/
+vendor/openrgb/

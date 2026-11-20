@@ -2,6 +2,8 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 # Fails if any required file is missing from a zip, so a release can never
 # ship without the sensors helper or the PawnIO installer.
+# Only the GPUI app by default; -Tauri also builds and zips the Tauri version.
+param([switch]$Tauri)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -17,9 +19,22 @@ Write-Host "== GPUI"
 cargo build --release -p markii-gpui
 if ($LASTEXITCODE) { throw "GPUI build failed" }
 
-Write-Host "== Tauri"
-cargo build --release -p markii-tauri --features tauri/custom-protocol
-if ($LASTEXITCODE) { throw "Tauri build failed" }
+if ($Tauri) {
+    Write-Host "== Tauri"
+    cargo build --release -p markii-tauri --features tauri/custom-protocol
+    if ($LASTEXITCODE) { throw "Tauri build failed" }
+}
+
+Write-Host "== OpenRGB 1.1 (cache em vendor\openrgb, conferido por SHA-256)"
+$orgbZip = "vendor\openrgb\OpenRGB_1.1_Windows_64_8e16de2.zip"
+$orgbSha = "63291726c6fc84eb479ef2ee752e97e1187f6ce9c49fd27eee40ded588a8172a"
+$orgbDir = "vendor\openrgb\OpenRGB Windows 64-bit"
+New-Item -ItemType Directory -Force "vendor\openrgb" | Out-Null
+if (-not (Test-Path $orgbZip)) {
+    Invoke-WebRequest "https://codeberg.org/OpenRGB/OpenRGB/releases/download/release_1.1/OpenRGB_1.1_Windows_64_8e16de2.zip" -OutFile $orgbZip
+}
+if ((Get-FileHash $orgbZip -Algorithm SHA256).Hash.ToLower() -ne $orgbSha) { throw "OpenRGB zip com hash errado" }
+if (-not (Test-Path "$orgbDir\OpenRGB.exe")) { Expand-Archive $orgbZip -DestinationPath "vendor\openrgb" -Force }
 
 $licNote = @"
 Componentes de terceiros incluidos no Mark II
@@ -36,6 +51,15 @@ markii-sensors.exe inclui a LibreHardwareMonitorLib 0.9.6.
 Logos de marcas (Intel, AMD, NVIDIA, ASUS, MSI, Corsair, Kingston...) - Simple Icons,
   dominio publico (CC0 1.0, Simple-Icons-CC0.txt). As marcas pertencem aos seus donos
   e sao usadas so para identificar o hardware deste PC. https://simpleicons.org
+"@
+$licOpenRgb = @"
+
+openrgb\ (so na versao GPUI) - OpenRGB 1.1, binarios oficiais sem modificacao.
+  Licenca: GNU GPL v2 (OpenRGB-GPL-2.0.txt). Usa Qt 6 (LGPL v3), hidapi, libusb e mbedtls.
+  Codigo-fonte: https://codeberg.org/OpenRGB/OpenRGB (tag release_1.1)
+  Binario original: https://codeberg.org/OpenRGB/OpenRGB/releases/tag/release_1.1
+  O Mark II roda o OpenRGB como programa separado e conversa com ele pelo SDK local
+  (127.0.0.1:6742) para controlar o RGB de memoria, placa de video, ventoinhas e coolers.
 "@
 
 function Readme($exe, $label) {
@@ -57,10 +81,19 @@ Configuracoes: %APPDATA%\com.akaineko.markii\config.json
 "@
 }
 
+$rgbNote = @"
+
+RGB (botao "RGB" no topo): controla as luzes de memoria, placa de video, placa-mae,
+ventoinhas e coolers com o OpenRGB que vem na pasta openrgb. Memoria, placa de video
+e placa-mae precisam do driver PawnIO e de administrador. "Reaplicar ao ligar o PC"
+cria a tarefa "Mark II RGB" no Agendador de Tarefas, que aplica as cores salvas no
+login sem abrir o Mark II (para remover, desmarque a opcao).
+"@
+
 $builds = @(
-    @{ name = "windows-x64";       exe = "MarkII.exe";       src = "target\release\markii.exe";       label = "GPUI (nativa)" },
-    @{ name = "tauri-windows-x64"; exe = "MarkII-Tauri.exe"; src = "target\release\markii-tauri.exe"; label = "Tauri (interface web, requer WebView2)" }
-)
+    @{ name = "windows-x64";       exe = "MarkII.exe";       src = "target\release\markii.exe";       label = "GPUI (nativa)"; rgb = $true },
+    @{ name = "tauri-windows-x64"; exe = "MarkII-Tauri.exe"; src = "target\release\markii-tauri.exe"; label = "Tauri (interface web, requer WebView2)"; rgb = $false }
+) | Where-Object { $Tauri -or -not $_.name.StartsWith("tauri") }
 $required = @("markii-sensors.exe", "PawnIO_setup.exe", "LEIA-ME.txt", "licencas\PawnIO-GPL-2.0.txt", "licencas\LibreHardwareMonitor-MPL-2.0.txt", "licencas\Simple-Icons-CC0.txt")
 
 foreach ($b in $builds) {
@@ -73,8 +106,13 @@ foreach ($b in $builds) {
     Copy-Item "vendor\pawnio\COPYING.txt" "$dir\licencas\PawnIO-GPL-2.0.txt"
     Copy-Item "vendor\LibreHardwareMonitor-MPL-2.0.txt" "$dir\licencas\LibreHardwareMonitor-MPL-2.0.txt"
     Copy-Item "crates\markii-core\assets\logos\LICENSE-CC0.md" "$dir\licencas\Simple-Icons-CC0.txt"
-    [IO.File]::WriteAllText("$root\$dir\licencas\LEIA-ME-LICENCAS.txt", $licNote)
-    [IO.File]::WriteAllText("$root\$dir\LEIA-ME.txt", (Readme $b.exe $b.label))
+    if ($b.rgb) {
+        Copy-Item $orgbDir "$dir\openrgb" -Recurse
+        Copy-Item "$orgbDir\LICENSE" "$dir\licencas\OpenRGB-GPL-2.0.txt" -ErrorAction SilentlyContinue
+        if (-not (Test-Path "$dir\licencas\OpenRGB-GPL-2.0.txt")) { Copy-Item "vendor\pawnio\COPYING.txt" "$dir\licencas\OpenRGB-GPL-2.0.txt" }
+    }
+    [IO.File]::WriteAllText("$root\$dir\licencas\LEIA-ME-LICENCAS.txt", $licNote + $(if ($b.rgb) { $licOpenRgb } else { "" }))
+    [IO.File]::WriteAllText("$root\$dir\LEIA-ME.txt", (Readme $b.exe $b.label) + $(if ($b.rgb) { $rgbNote } else { "" }))
 
     $zip = "dist\MarkII-v$ver-$($b.name).zip"
     if (Test-Path $zip) { Remove-Item -Force $zip }
@@ -85,7 +123,9 @@ foreach ($b in $builds) {
     $z = [IO.Compression.ZipFile]::OpenRead("$root\$zip")
     $names = $z.Entries | ForEach-Object { $_.FullName -replace '/', '\' }
     $z.Dispose()
-    foreach ($f in @($b.exe) + $required) {
+    $need = @($b.exe) + $required
+    if ($b.rgb) { $need += @("openrgb\OpenRGB.exe", "openrgb\PawnIOLib.dll", "licencas\OpenRGB-GPL-2.0.txt") }
+    foreach ($f in $need) {
         if ($names -notcontains $f) { throw "$zip is missing $f" }
     }
     $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
