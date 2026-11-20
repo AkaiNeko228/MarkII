@@ -182,7 +182,7 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
   - Placas com chipset Intel H310/H410/H510/H610 mostram 2 slots de RAM (a BIOS de muitas informa 4).
 - Painel da CPU sem espaço vazio em processadores com poucos núcleos.
 
-## v0.7.4 (pré-lançamento)
+## v0.7.4
 
 - **Water cooler em placas que não dão nome aos conectores** ("Fan #1", "Fan #2"...): um conector que fica a 1750+ rpm por 20 s com a CPU fria (até 55 °C) e nunca cai abaixo de 1500 rpm conta como bomba (palpite). Ventoinhas de air cooler que só aceleram com a CPU quente não contam.
 - Novo desenho do air cooler: torre vista de frente, ventoinha presa nas aletas, heatpipes e base sobre a CPU.
