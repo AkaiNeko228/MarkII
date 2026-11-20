@@ -133,6 +133,10 @@ const SYS_DEVICE_CLASS: usize = 20;
 const SYS_IS_CONNECTED: usize = 21;
 const SYS_GET_BOOL: usize = 22;
 const SYS_GET_FLOAT: usize = 23;
+const SYS_GET_STRING: usize = 28;
+const PROP_TRACKING_SYSTEM: i32 = 1000;
+const PROP_MODEL: i32 = 1001;
+const PROP_MANUFACTURER: i32 = 1005;
 const MAX_DEVICES: u32 = 64;
 const CLASS_HMD: i32 = 1;
 const CLASS_CONTROLLER: i32 = 2;
@@ -178,6 +182,8 @@ struct Session {
     ov: *const usize,
     handle: u64,
     attached: bool,
+    /// What was last logged about the devices, to log again only when it changes.
+    devices_logged: String,
 }
 
 impl Session {
@@ -202,7 +208,7 @@ impl Session {
             let get: libloading::Symbol<unsafe extern "C" fn(*const i8, *mut i32) -> isize> = lib.get(b"VR_GetGenericInterface\0").map_err(|e| e.to_string())?;
             let sys = get(b"FnTable:IVRSystem_026\0".as_ptr() as _, &mut err) as *const usize;
             let ov = get(b"FnTable:IVROverlay_028\0".as_ptr() as _, &mut err) as *const usize;
-            let mut s = Self { lib, sys, ov, handle: 0, attached: false };
+            let mut s = Self { lib, sys, ov, handle: 0, attached: false, devices_logged: String::new() };
             if sys.is_null() || ov.is_null() {
                 s.shutdown();
                 return Err("interface do SteamVR indisponível".into());
@@ -253,14 +259,27 @@ impl Session {
     }
 
     /// Battery of every connected headset / controller / tracker that reports one.
-    fn batteries(&self) -> Vec<VrBattery> {
+    fn batteries(&mut self) -> Vec<VrBattery> {
         let mut out = Vec::new();
+        // one line per device for the log: which driver, and what it says about the battery
+        let mut diag: Vec<String> = Vec::new();
         unsafe {
             let connected: extern "C" fn(u32) -> bool = std::mem::transmute(*self.sys.add(SYS_IS_CONNECTED));
             let class: extern "C" fn(u32) -> i32 = std::mem::transmute(*self.sys.add(SYS_DEVICE_CLASS));
             let role: extern "C" fn(u32) -> i32 = std::mem::transmute(*self.sys.add(SYS_ROLE_FOR_DEVICE));
             let get_bool: extern "C" fn(u32, i32, *mut i32) -> bool = std::mem::transmute(*self.sys.add(SYS_GET_BOOL));
             let get_float: extern "C" fn(u32, i32, *mut i32) -> f32 = std::mem::transmute(*self.sys.add(SYS_GET_FLOAT));
+            let get_string: extern "C" fn(u32, i32, *mut u8, u32, *mut i32) -> u32 = std::mem::transmute(*self.sys.add(SYS_GET_STRING));
+            let text = |i: u32, prop: i32| -> String {
+                let mut buf = [0u8; 128];
+                let mut e = 0i32;
+                get_string(i, prop, buf.as_mut_ptr(), buf.len() as u32, &mut e);
+                if e != 0 {
+                    return String::new();
+                }
+                let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                String::from_utf8_lossy(&buf[..end]).chars().filter(|c| !c.is_control()).take(48).collect()
+            };
             for i in 0..MAX_DEVICES {
                 if !connected(i) {
                     continue;
@@ -275,18 +294,32 @@ impl Session {
                     CLASS_TRACKER => "Rastreador",
                     _ => continue,
                 };
-                let mut e = 0i32;
-                let provides = get_bool(i, PROP_PROVIDES_BATTERY, &mut e) && e == 0;
+                let mut e1 = 0i32;
+                let provides = get_bool(i, PROP_PROVIDES_BATTERY, &mut e1) && e1 == 0;
                 let mut e = 0i32;
                 let frac = get_float(i, PROP_BATTERY_PCT, &mut e);
                 // some drivers fill the percentage without the "provides" flag
-                if e != 0 || !frac.is_finite() || !(provides || frac > 0.0) {
+                let ok = e == 0 && frac.is_finite() && (provides || frac > 0.0);
+                diag.push(format!(
+                    "{name} [{} · {} {}] informa bateria: {} (erro {e1}), porcentagem: {} (erro {e})",
+                    text(i, PROP_TRACKING_SYSTEM),
+                    text(i, PROP_MANUFACTURER),
+                    text(i, PROP_MODEL),
+                    if provides { "sim" } else { "não" },
+                    if ok { "ok" } else if e == 0 && frac == 0.0 { "zero" } else { "não" },
+                ));
+                if !ok {
                     continue;
                 }
                 let mut e = 0i32;
                 let charging = get_bool(i, PROP_IS_CHARGING, &mut e) && e == 0;
                 out.push(VrBattery { name: name.into(), pct: (frac.clamp(0.0, 1.0) * 100.0).round(), charging });
             }
+        }
+        let d = diag.join(" | ");
+        if d != self.devices_logged {
+            markii_core::log::info(if d.is_empty() { "painel VR: nenhum óculos/controle conectado no SteamVR".to_string() } else { format!("painel VR: aparelhos: {d}") });
+            self.devices_logged = d;
         }
         // headset first, then left, right, others
         let rank = |n: &str| ["Óculos", "Controle esquerdo", "Controle direito", "Controle"].iter().position(|x| *x == n).unwrap_or(9);
