@@ -69,8 +69,18 @@ object DeviceInfo {
         return j
     }
 
+    /** False once reading failed: the system blocks it, so don't retry every second. */
+    @Volatile private var thermalReadable = true
+
     /** Hottest CPU-ish thermal zone, when the system lets apps read it (many don't). */
-    private fun cpuTemp(): Double? = runCatching {
+    private fun cpuTemp(): Double? {
+        if (!thermalReadable) return null
+        val t = readCpuTemp()
+        if (t == null) thermalReadable = false
+        return t
+    }
+
+    private fun readCpuTemp(): Double? = runCatching {
         val zones = File("/sys/class/thermal").listFiles { f -> f.name.startsWith("thermal_zone") } ?: return null
         zones.mapNotNull { z ->
             val type = runCatching { File(z, "type").readText().trim().lowercase() }.getOrNull() ?: return@mapNotNull null
