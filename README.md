@@ -182,6 +182,12 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
   - Placas com chipset Intel H310/H410/H510/H610 mostram 2 slots de RAM (a BIOS de muitas informa 4).
 - Painel da CPU sem espaço vazio em processadores com poucos núcleos.
 
+## v0.7.4 (pré-lançamento)
+
+- **Water cooler em placas que não dão nome aos conectores** ("Fan #1", "Fan #2"...): um conector girando entre 2000 e 5500 rpm conta como bomba (palpite).
+- Mais controladores reconhecidos: ASUS ROG Ryujin/Ryuo/Strix LC, TUF Gaming LC, AORUS Waterforce, Corsair iCUE LINK e H100x/H150x, Phanteks Glacier.
+- O log passa a incluir a placa-mãe, a refrigeração detectada (e o motivo), cada ventoinha com rpm e os controladores de refrigeração encontrados.
+
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo

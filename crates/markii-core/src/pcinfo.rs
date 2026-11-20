@@ -85,7 +85,7 @@ $ram=Get-CimInstance Win32_PhysicalMemory | ForEach-Object { [pscustomobject]@{s
 $arr=@(Get-CimInstance Win32_PhysicalMemoryArray | Where-Object { $_.Use -eq 3 }); $slots=($arr | Measure-Object MemoryDevices -Sum).Sum; $maxkb=($arr | Measure-Object MaxCapacityEx -Sum).Sum
 $rgb=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'RGB|Aura|Mystic Light|Polychrome|LED Controller|Lighting|Chroma|ENE |Spectrix|Fusion|iCUE' -and $_.Name -notmatch 'Audio|Display|Monitor' } | Select-Object -ExpandProperty Name -Unique
 $disks=Get-PhysicalDisk | ForEach-Object { [pscustomobject]@{model=([string]$_.FriendlyName).Trim(); size_gb=[math]::Round($_.Size/1GB); media=[string]$_.MediaType; bus=[string]$_.BusType} }
-$cool=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water' -and $_.PNPClass -notin @('AudioEndpoint','MEDIA','Net','Keyboard','Mouse','Display','Monitor','SoftwareDevice','Image','Camera','Bluetooth','Printer') } | Select-Object -ExpandProperty Name -Unique
+$cool=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water|Ryujin|Ryuo|ROG|TUF|AORUS|Glacier' -and $_.PNPClass -notin @('AudioEndpoint','MEDIA','Net','Keyboard','Mouse','Display','Monitor','SoftwareDevice','Image','Camera','Bluetooth','Printer') } | Select-Object -ExpandProperty Name -Unique
 [pscustomobject]@{
  maker=[string]$cs.Manufacturer; model=[string]$cs.Model; board_maker=[string]$bb.Manufacturer; board=[string]$bb.Product; board_version=[string]$bb.Version; ram_slots=[int]$slots; ram_max_gb=[math]::Round($maxkb/1MB); rgb_devices=@($rgb)
  bios=("{0} {1}" -f $bi.Manufacturer,$bi.SMBIOSBIOSVersion).Trim(); os=[string]$os.Caption; os_build=("{0} build {1}" -f $os.Version,$os.BuildNumber)
@@ -144,7 +144,8 @@ pub fn is_cooler_device(name: &str) -> bool {
     static R: OnceLock<Regex> = OnceLock::new();
     let re = R.get_or_init(|| {
         Regex::new(concat!(
-            r"(?i)\bkraken\b|\bhydro (series|x)\b|\bcapellix\b|\bcommander core\b|\bh\d{2,3}i\b|",
+            r"(?i)\bkraken\b|\bhydro (series|x)\b|\bcapellix\b|\bcommander core\b|\bicue link\b|\bh\d{2,3}[ix]\b|",
+            r"\brog (ryujin|ryuo|strix lc)|\btuf gaming lc\b|\baorus (waterforce|liquid)|\bwaterforce\b|\bglacier one\b|",
             r"\bgalahad\b|\basetek\b|\bcoreliquid\b|\bmasterliquid\b|\bliquid ?freezer\b|\bliquid ?cool|\bwater ?cool|",
             r"\baio\b|\bpump\b|\bek-?(aio|nucleus)\b|\baquacomputer\b|\baquaero\b|\bd5 next\b|\btoughliquid\b|\bfloe\b|",
             r"\bdeepcool (ls|lt|le|castle|mystique|captain)\d*"
@@ -160,6 +161,13 @@ fn pump_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"(?i)pump|\baio\b|w_pump").unwrap())
 }
+/// Headers the board does not name ("Fan #3", "fan2"): LibreHardwareMonitor only knows
+/// the names on some boards.
+fn generic_fan_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"(?i)^fan\s*#?\s*\d+$").unwrap())
+}
+
 fn opt_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"(?i)\bopt\b|_opt\b").unwrap())
@@ -175,6 +183,9 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) 
         .iter()
         .find(|f| pump_re().is_match(&f.label) && f.rpm > 300.0)
         .or_else(|| fans.iter().find(|f| opt_re().is_match(&f.label) && f.rpm >= 2200.0));
+    // Unnamed headers: a pump runs flat out (2000+ rpm) all the time, while case and CPU
+    // fans of a normal PC stay well below that unless the CPU is very hot.
+    let unnamed_pump = fans.iter().filter(|f| generic_fan_re().is_match(&f.label) && f.rpm >= 2000.0 && f.rpm <= 5500.0).max_by(|a, b| a.rpm.total_cmp(&b.rpm));
     // Named "CPU fan" header, or — on boards whose headers are unnamed — the only one spinning.
     let spinning: Vec<&Fan> = fans.iter().filter(|f| f.rpm > 0.0).collect();
     let cpu_fan = fans
@@ -182,7 +193,7 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) 
         .find(|f| cpu_fan_re().is_match(&f.label) && f.rpm > 0.0)
         .or_else(|| (spinning.len() == 1).then(|| spinning[0]));
     let mut c = Cooling {
-        pump_rpm: pump.map(|f| f.rpm),
+        pump_rpm: pump.or(unnamed_pump).map(|f| f.rpm),
         cpu_fan_rpm: cpu_fan.map(|f| f.rpm),
         fans: fans.to_vec(),
         ..Default::default()
@@ -197,6 +208,8 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool) 
                 ("water", "high", format!("bomba detectada em “{}” ({:.0} rpm)", p.label, p.rpm))
             } else if let Some(d) = devices.first() {
                 ("water", "medium", format!("controlador de water cooler encontrado: {d}"))
+            } else if let Some(p) = unnamed_pump {
+                ("water", "low", format!("“{}” gira a {:.0} rpm, rotação de bomba (a placa não diz o nome dos conectores)", p.label, p.rpm))
             } else if let Some(f) = cpu_fan {
                 ("air", "medium", format!("ventoinha da CPU em “{}” ({:.0} rpm) e nenhuma bomba", f.label, f.rpm))
             } else if fans.iter().any(|f| f.rpm > 0.0) {
@@ -236,5 +249,20 @@ mod cooler_tests {
         assert_eq!(c.kind, "air");
         let c = detect("auto", None, &[fan("CPU Fan", 1200.0), fan("CPU_OPT", 2900.0)], true);
         assert_eq!(c.kind, "water");
+    }
+
+    #[test]
+    fn unnamed_header_at_pump_speed_is_a_pump() {
+        let fan = |l: &str, rpm: f64| Fan { label: l.into(), rpm, ..Default::default() };
+        let c = detect("auto", None, &[fan("Fan #1", 900.0), fan("Fan #2", 2650.0), fan("Fan #3", 1100.0), fan("Fan #5", 850.0)], true);
+        assert_eq!((c.kind.as_str(), c.pump_rpm), ("water", Some(2650.0)));
+        let c = detect("auto", None, &[fan("Fan #1", 900.0), fan("Fan #2", 1300.0), fan("Fan #3", 1100.0)], true);
+        assert_eq!(c.kind, "air");
+        for yes in ["ROG RYUJIN III 360", "ROG STRIX LC II 240", "AORUS WATERFORCE X 360", "Corsair iCUE LINK System Hub", "Corsair H100x RGB ELITE"] {
+            assert!(is_cooler_device(yes), "{yes}");
+        }
+        for no in ["ROG STRIX B550-F GAMING", "TUF GAMING X570-PLUS", "AORUS ELITE", "NVIDIA H100"] {
+            assert!(!is_cooler_device(no), "{no}");
+        }
     }
 }

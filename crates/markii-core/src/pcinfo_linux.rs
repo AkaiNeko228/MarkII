@@ -217,7 +217,7 @@ pub fn collect() -> PcInfo {
         gpu_driver,
         ram,
         disks: disks(),
-        cooling_devices: pick(r"(?i)Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water")
+        cooling_devices: pick(r"(?i)Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water|Ryujin|Ryuo|ROG|TUF|AORUS|Glacier")
             .into_iter()
             .filter(|d| crate::pcinfo::is_cooler_device(d))
             .collect(),

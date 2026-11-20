@@ -190,6 +190,19 @@ GPU: {}
             yn(cfg.sensors_admin),
             yn(cfg.alerts_enabled)
         );
+        if let Some(p) = &self.pc {
+            h += &format!("Placa-mãe: {} {}\n", p.board_maker, p.board);
+            if !p.cooling_devices.is_empty() {
+                h += &format!("Controladores de refrigeração USB: {}\n", p.cooling_devices.join(", "));
+            }
+        }
+        if let Some(t) = t {
+            let k = &t.cooling;
+            h += &format!("Refrigeração: {} (modo {}, certeza {}) · {}\n", k.kind, cfg.cooling, k.confidence, k.reason);
+            if !t.fans.is_empty() {
+                h += &format!("Ventoinhas: {}\n", t.fans.iter().map(|f| format!("{} {:.0} rpm", f.label, f.rpm)).collect::<Vec<_>>().join(" · "));
+            }
+        }
         h
     }
 
