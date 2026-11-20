@@ -165,6 +165,11 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - Janela cabe na tela também com escala de 125%/150% (notebooks): o tamanho vem da área útil do Windows, sem a barra de tarefas.
 - GPU integrada (Intel HD/UHD/Iris, APUs AMD): sem "chips de VRAM" inventados; mostra a temperatura do chip do processador, consumo, clock e "memória compartilhada".
 
+## v0.7.2
+
+- **App Android com 4 abas**: **Painel** (anéis de CPU/GPU/RAM no celular em pé; três colunas grandes na janela deitada do Quest/Pico), **Detalhes** (carga de cada thread, GPU, RAM, discos, ventoinhas, rede), **Este aparelho** (bateria, aquecimento, memória, armazenamento e Wi-Fi do próprio celular/óculos) e **Ajustes** (conexão, tema, enviar status ao PC, desconectar).
+- O Mark II do PC passa a enviar a carga de cada thread e o uso dos discos para o app (apps antigos continuam funcionando).
+
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo
