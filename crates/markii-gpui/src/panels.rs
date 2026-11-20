@@ -803,3 +803,84 @@ fn chip_kv(k: &str, v: String) -> Div {
         .child(div().text_color(c(MUTED)).child(k.to_string()))
         .child(div().font_family(NUM_FONT).child(v))
 }
+
+// ---------------------------------------------------------------- phone / headset
+impl Dashboard {
+    /// One panel per phone or headset running the Mark II app that reported in the
+    /// last seconds (battery, heat, Wi-Fi...). None when nothing is connected.
+    pub(crate) fn devices_panel(&self) -> Option<Div> {
+        let devs = markii_core::remote::global().devices();
+        if devs.is_empty() {
+            return None;
+        }
+        let panels = devs.into_iter().map(|d| {
+            let bat = d.battery;
+            let bat_col = match bat {
+                Some(b) if b <= 15.0 => RED,
+                Some(b) if b <= 30.0 => ORANGE,
+                Some(_) => GREEN,
+                None => MUTED,
+            };
+            let thermal = d.thermal.map(|t| match t {
+                0 => ("normal", GREEN),
+                1 => ("morno", GREEN),
+                2 => ("quente", YELLOW),
+                3 => ("muito quente", ORANGE),
+                _ => ("crítico", RED),
+            });
+            let wifi = d.wifi_rssi.map(|r| {
+                let q = if r >= -55 { "ótimo" } else if r >= -67 { "bom" } else if r >= -75 { "fraco" } else { "ruim" };
+                let col = if r >= -67 { GREEN } else if r >= -75 { YELLOW } else { RED };
+                (format!("{r} dBm"), q, col)
+            });
+            let up = d.uptime.map(|s| {
+                let (h, m) = (s / 3600, s % 3600 / 60);
+                if h >= 24 { format!("{}d {}h", h / 24, h % 24) } else { format!("{h}h {m}m") }
+            });
+            let cells = vec![
+                cell(
+                    "Aquecimento",
+                    thermal.map_or("—".into(), |t| t.0.to_string()),
+                    thermal.map(|t| t.1),
+                    d.cpu_temp.map(|v| format!("processador {v:.0} °C")),
+                ),
+                cell("Temp. da bateria", opt(d.battery_temp, |v| format!("{v:.0} °C")), Some(temp_col(d.battery_temp.map(|v| v + 25.0))), None),
+                cell(
+                    "Memória",
+                    match (d.ram_used, d.ram_total) {
+                        (Some(u), Some(t)) if t > 0 => format!("{:.0}%", u as f64 * 100.0 / t as f64),
+                        _ => "—".into(),
+                    },
+                    None,
+                    d.ram_total.map(|t| format!("de {} GB", gb(t))),
+                ),
+                cell(
+                    "Armazenamento",
+                    d.storage_free.map_or("—".into(), |f| format!("{} GB livres", gb(f))),
+                    None,
+                    d.storage_total.map(|t| format!("de {} GB", gb(t))),
+                ),
+                cell("Wi-Fi", wifi.as_ref().map_or("—".into(), |w| w.1.to_string()), wifi.as_ref().map(|w| w.2), wifi.as_ref().map(|w| {
+                    format!("{}{}", w.0, d.wifi_mbps.map(|m| format!(" · {m} Mbit/s")).unwrap_or_default())
+                })),
+                cell("Ligado há", up.unwrap_or_else(|| "—".into()), None, None),
+            ];
+            panel(CYAN, "ÓCULOS / CELULAR", d.name.clone(), bat.is_some_and(|b| b <= 15.0) || d.thermal.is_some_and(|t| t >= 3))
+                .child(
+                    div()
+                        .flex()
+                        .items_end()
+                        .gap(px(10.))
+                        .child(num(bat.map_or("—".into(), |b| format!("{b:.0}%")), 30.).text_color(c(bat_col)))
+                        .child(div().pb(px(5.)).text_color(c(MUTED)).text_size(px(12.5)).child(if d.charging {
+                            "bateria · carregando".to_string()
+                        } else {
+                            "bateria".to_string()
+                        })),
+                )
+                .child(segbar(bat.unwrap_or(0.0), 30, bat_col, 6.))
+                .child(div().mt(px(10.)).child(grid(cells, 3)))
+        });
+        Some(div().flex().gap(px(12.)).children(panels.map(|p| p.flex_1())))
+    }
+}

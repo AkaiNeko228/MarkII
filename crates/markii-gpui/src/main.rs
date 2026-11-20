@@ -201,6 +201,7 @@ fn main() {
             settings: None,
             save_msg: "".into(),
             rgb: None,
+            fw: Default::default(),
         });
         let v2 = view.clone();
         cx.open_window(opts, move |window, cx| {

@@ -5,7 +5,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** The three read-only calls of the Mark II server (crates/markii-core/src/remote.rs). */
+/** The calls of the Mark II server (crates/markii-core/src/remote.rs). */
 object Api {
     const val DEFAULT_PORT = 47820
 
@@ -46,7 +46,9 @@ object Api {
         return call(address, "/v1/pair", body = body).getString("token")
     }
 
-    fun snapshot(address: String, token: String): Snap = Snap.from(call(address, "/v1/snapshot", token = token))
+    /** Reads the PC; when `device` is given, also tells the PC this device's status. */
+    fun snapshot(address: String, token: String, device: JSONObject? = null): Snap =
+        Snap.from(call(address, "/v1/snapshot", token = token, body = device?.toString()))
 }
 
 /** Mirror of markii_core::snapshot::Snapshot. */

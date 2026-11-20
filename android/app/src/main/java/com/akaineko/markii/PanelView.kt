@@ -19,25 +19,10 @@ class PanelView(context: Context) : View(context) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bold = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
 
+    var pal: Palette = Themes.current(context)
+        set(v) { field = v; invalidate() }
+
     companion object {
-        const val BG = 0xFF0E1116.toInt()
-        const val PANEL = 0xFF161B22.toInt()
-        const val LINE = 0xFF262E39.toInt()
-        const val TEXT = 0xFFE8EDF3.toInt()
-        const val MUTED = 0xFF8B96A5.toInt()
-        const val AMBER = 0xFFFFB020.toInt()
-        const val GREEN = 0xFF3FD17A.toInt()
-        const val RED = 0xFFFF5A5A.toInt()
-        const val INDIGO = 0xFF7B7FF5.toInt()
-        const val CYAN = 0xFF44C7E0.toInt()
-
-        fun tempCol(t: Double?) = when {
-            t == null -> MUTED
-            t >= 85 -> RED
-            t >= 72 -> AMBER
-            else -> GREEN
-        }
-
         fun gb(b: Long): String {
             val g = b / 1073741824.0
             return if (g >= 10) "%.0f".format(g) else "%.1f".format(g)
@@ -69,11 +54,11 @@ class PanelView(context: Context) : View(context) {
         val gap = h / 6
         val on = ((pct.coerceIn(0.0, 100.0) / 100.0) * segs).roundToInt()
         val sw = (w - (segs - 1) * gap) / segs
-        for (i in 0 until segs) rect(c, x + i * (sw + gap), y, sw, h, if (i < on) color else LINE)
+        for (i in 0 until segs) rect(c, x + i * (sw + gap), y, sw, h, if (i < on) color else pal.line)
     }
 
     override fun onDraw(c: Canvas) {
-        c.drawColor(BG)
+        c.drawColor(pal.bg)
         // design units: 640 x 400
         val k = min(width / 640f, height / 400f)
         val ox = (width - 640 * k) / 2
@@ -81,44 +66,44 @@ class PanelView(context: Context) : View(context) {
         c.save()
         c.translate(ox, oy)
         c.scale(k, k)
-        rect(c, 0f, 0f, 640f, 4f, AMBER)
-        text(c, "MARK", 22f, 44f, 26f, TEXT, true)
-        text(c, "II", 22f + p.measureText("MARK "), 44f, 26f, AMBER, true)
+        rect(c, 0f, 0f, 640f, 4f, pal.amber)
+        text(c, "MARK", 22f, 44f, 26f, pal.text, true)
+        text(c, "II", 22f + p.measureText("MARK "), 44f, 26f, pal.amber, true)
         val s = snap
         if (s == null) {
-            text(c, status, 22f, 120f, 22f, MUTED)
+            text(c, status, 22f, 120f, 22f, pal.muted)
             c.restore()
             return
         }
-        text(c, s.host.take(24), 300f, 42f, 18f, MUTED)
+        text(c, s.host.take(24), 300f, 42f, 18f, pal.muted)
 
         data class Row(val name: String, val col: Int, val pct: Double, val big: String, val detail: String, val dcol: Int)
         fun opt(v: Double?, unit: String) = v?.let { "%.0f%s".format(it, unit) } ?: "—"
         val vram = if (s.vramUsed != null && s.vramTotal != null && s.vramTotal > 0) "  ·  ${gb(s.vramUsed)}/${gb(s.vramTotal)} GB" else ""
         val rows = listOf(
-            Row("CPU", INDIGO, s.cpuLoad, "%.0f%%".format(s.cpuLoad), "${opt(s.cpuTemp, "°C")}  ·  ${opt(s.cpuPower, " W")}", tempCol(s.cpuTemp)),
-            Row("GPU", GREEN, s.gpuLoad ?: 0.0, opt(s.gpuLoad, "%"), "${opt(s.gpuTemp, "°C")}  ·  ${opt(s.gpuPower, " W")}$vram", tempCol(s.gpuTemp)),
-            Row("RAM", AMBER, s.ramPct, "%.0f%%".format(s.ramPct), "${gb(s.ramUsed)} / ${gb(s.ramTotal)} GB", MUTED),
+            Row("CPU", pal.indigo, s.cpuLoad, "%.0f%%".format(s.cpuLoad), "${opt(s.cpuTemp, "°C")}  ·  ${opt(s.cpuPower, " W")}", pal.tempCol(s.cpuTemp)),
+            Row("GPU", pal.green, s.gpuLoad ?: 0.0, opt(s.gpuLoad, "%"), "${opt(s.gpuTemp, "°C")}  ·  ${opt(s.gpuPower, " W")}$vram", pal.tempCol(s.gpuTemp)),
+            Row("RAM", pal.amber, s.ramPct, "%.0f%%".format(s.ramPct), "${gb(s.ramUsed)} / ${gb(s.ramTotal)} GB", pal.muted),
         )
         var y = 66f
         for (r in rows) {
-            rect(c, 14f, y, 612f, 74f, PANEL)
+            rect(c, 14f, y, 612f, 74f, pal.panel)
             rect(c, 14f, y + 12f, 3f, 18f, r.col)
-            text(c, r.name, 26f, y + 30f, 18f, MUTED)
-            text(c, r.big, 26f, y + 64f, 32f, TEXT, true)
+            text(c, r.name, 26f, y + 30f, 18f, pal.muted)
+            text(c, r.big, 26f, y + 64f, 32f, pal.text, true)
             bar(c, 150f, y + 18f, 460f, 12f, r.pct, r.col)
             text(c, r.detail, 150f, y + 62f, 21f, r.dcol)
             y += 82f
         }
-        text(c, "↓ ${rate(s.netRx)}   ↑ ${rate(s.netTx)}", 24f, y + 20f, 17f, CYAN)
+        text(c, "↓ ${rate(s.netRx)}   ↑ ${rate(s.netTx)}", 24f, y + 20f, 17f, pal.cyan)
         val fans = s.fans.take(3).joinToString("  ") { "${it.first.split(" ").first()} ${"%.0f".format(it.second)} rpm" }
-        if (fans.isNotEmpty()) text(c, fans, 300f, y + 20f, 17f, MUTED)
+        if (fans.isNotEmpty()) text(c, fans, 300f, y + 20f, 17f, pal.muted)
         y += 32f
         if (s.alerts.isNotEmpty()) {
-            rect(c, 14f, y, 612f, 28f, 0xFF3A1418.toInt())
-            text(c, "⚠ " + s.alerts.joinToString(" · "), 24f, y + 20f, 17f, RED)
+            rect(c, 14f, y, 612f, 28f, pal.alertBg)
+            text(c, "⚠ " + s.alerts.joinToString(" · "), 24f, y + 20f, 17f, pal.red)
         } else {
-            text(c, status, 24f, y + 20f, 15f, if (status == "ao vivo") GREEN else MUTED)
+            text(c, status, 24f, y + 20f, 15f, if (status == "ao vivo") pal.green else pal.muted)
         }
         c.restore()
     }

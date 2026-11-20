@@ -40,6 +40,8 @@ pub struct Dashboard {
     pub settings: Option<Config>,
     pub save_msg: SharedString,
     pub rgb: Option<crate::rgb_view::RgbUi>,
+    /// Windows firewall state for the LAN server: (rule present?, last message).
+    pub fw: Arc<Mutex<(Option<bool>, String)>>,
 }
 
 // ---------- formatting ----------
@@ -139,6 +141,18 @@ pub(crate) fn row(k: impl Into<SharedString>, v: impl Into<SharedString>) -> Div
 }
 
 impl Dashboard {
+    /// Re-reads whether Mark II's firewall rule exists (in the background; netsh is slow-ish).
+    pub fn check_fw(&self) {
+        if !markii_core::remote::global().running() && !self.cfg.lock().unwrap().remote_enabled {
+            return;
+        }
+        let fw = self.fw.clone();
+        std::thread::spawn(move || {
+            let ok = markii_core::remote::firewall_ok();
+            fw.lock().unwrap().0 = Some(ok);
+        });
+    }
+
     pub fn ingest(&mut self, t: Telemetry) {
         let h = &mut self.hist;
         push(&mut h.cpu, Some(t.cpu.load as f64));
@@ -266,6 +280,7 @@ impl Dashboard {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.settings = Some(this.cfg());
                                 this.save_msg = "".into();
+                                this.check_fw();
                                 cx.notify();
                             }))
                             .child("⚙  Configurações"),
@@ -913,6 +928,11 @@ impl Dashboard {
                     .child(toggle("t-remote", "Permitir o app Mark II na rede local (só leitura, com PIN)", s.remote_enabled, |s| s.remote_enabled = !s.remote_enabled))
                     .child({
                         let info = markii_core::remote::global().info();
+                        // read once: a guard kept alive across the builder chain would deadlock
+                        let fw_block = {
+                            let g = self.fw.lock().unwrap();
+                            (g.0 == Some(false)).then(|| g.1.clone())
+                        };
                         if info.running {
                             div()
                                 .mt(px(6.))
@@ -932,6 +952,26 @@ impl Dashboard {
                                         .child(small(info.connected.clone().map_or("nenhum conectado agora".to_string(), |n| format!("conectado: {n}")), if info.connected.is_some() { GREEN } else { DIM }))
                                         .when_some(info.error.clone(), |d, e| d.child(small(e, RED))),
                                 )
+                                .when_some(fw_block, |d, msg| {
+                                    d.child(
+                                        div()
+                                            .child(small(if msg.is_empty() { "O firewall do Windows está bloqueando o app.".to_string() } else { msg }, RED))
+                                            .child(btn("fw-allow", "Liberar no firewall", true).on_click(cx.listener(|this, _, _, cx| {
+                                                let fw = this.fw.clone();
+                                                let port = this.cfg.lock().unwrap().remote_port;
+                                                fw.lock().unwrap().1 = "confirme no aviso do Windows (UAC)…".into();
+                                                std::thread::spawn(move || {
+                                                    let r = markii_core::remote::allow_firewall(port);
+                                                    *fw.lock().unwrap() = match r {
+                                                        Ok(()) => (Some(true), String::new()),
+                                                        Err(e) if e == "cancelado" => (Some(false), "Cancelado no UAC: o app não vai achar o PC até liberar.".into()),
+                                                        Err(e) => (Some(false), format!("Não consegui liberar: {e}")),
+                                                    };
+                                                });
+                                                cx.notify();
+                                            }))),
+                                    )
+                                })
                                 .when(info.paired > 0, |d| {
                                     d.child(btn("unpair", "Desconectar todos", false).on_click(cx.listener(|_, _, _, cx| {
                                         markii_core::remote::global().unpair_all();
@@ -984,6 +1024,7 @@ impl Dashboard {
                                             this.settings = Some(this.cfg.lock().unwrap().clone());
                                             this.save_msg = "salvo · use o endereço e o PIN acima".into();
                                         }
+                                        this.check_fw();
                                     } else {
                                         markii_core::remote::global().stop();
                                     }
@@ -1032,6 +1073,7 @@ impl Render for Dashboard {
                         .when_some(self.sensors_bar(&t, cx), |d, a| d.child(a))
                         .child(self.sources(&t))
                         .child(self.vitals(&t))
+                        .when_some(self.devices_panel(), |d, p| d.child(p))
                         .child(duo(self.cpu_panel(&t, cx), self.gpu_panel(&t)))
                         .child(duo(self.ram_panel(&t), self.board_panel(&t)))
                         .child(duo(self.fans_panel(&t), self.cool_panel(&t)))

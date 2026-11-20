@@ -3,6 +3,8 @@
 
     <!-- talks only to the Mark II on the PC, over the local network -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Wi-Fi signal strength shown in Mark II on the PC (no location, no scanning) -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
         android:allowBackup="false"

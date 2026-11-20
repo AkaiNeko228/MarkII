@@ -12,7 +12,7 @@
 //! Wrong PINs are limited: after 5 the PIN changes and pairing pauses for 30 s.
 
 use crate::snapshot::Snapshot;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,7 +35,52 @@ struct Inner {
     address: String,
     error: Option<String>,
     last_client: Option<(String, Instant)>,
+    /// What each paired device reported about itself: (token, data, when).
+    devices: Vec<(String, Device, Instant)>,
 }
+
+/// What the phone / headset app reports about itself (sent with each refresh).
+/// Every field is optional: the app sends what its platform lets it read.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Device {
+    pub name: String,
+    /// Battery, 0-100.
+    pub battery: Option<f64>,
+    pub charging: bool,
+    pub battery_temp: Option<f64>,
+    pub ram_used: Option<u64>,
+    pub ram_total: Option<u64>,
+    pub storage_free: Option<u64>,
+    pub storage_total: Option<u64>,
+    /// Wi-Fi signal in dBm and link speed in Mbit/s.
+    pub wifi_rssi: Option<i32>,
+    pub wifi_mbps: Option<i32>,
+    /// Android thermal status: 0 none, 1 light, 2 moderate, 3 severe, 4 critical, 5 emergency, 6 shutdown.
+    pub thermal: Option<i32>,
+    pub cpu_temp: Option<f64>,
+    pub uptime: Option<u64>,
+}
+
+impl Device {
+    /// Keeps a report from the network sane before showing it.
+    fn clean(mut self, fallback: &str) -> Self {
+        self.name = self.name.chars().filter(|c| !c.is_control()).take(40).collect();
+        if self.name.trim().is_empty() {
+            self.name = fallback.to_string();
+        }
+        let fin = |v: Option<f64>, lo: f64, hi: f64| v.filter(|x| x.is_finite() && *x >= lo && *x <= hi);
+        self.battery = fin(self.battery, 0.0, 100.0);
+        self.battery_temp = fin(self.battery_temp, -40.0, 150.0);
+        self.cpu_temp = fin(self.cpu_temp, -40.0, 150.0);
+        self.thermal = self.thermal.filter(|t| (0..=6).contains(t));
+        self.wifi_rssi = self.wifi_rssi.filter(|r| (-127..=0).contains(r));
+        self
+    }
+}
+
+/// How long a device report stays on screen after the app stops sending.
+const DEVICE_TTL: Duration = Duration::from_secs(8);
 
 pub struct Remote {
     inner: Arc<Mutex<Inner>>,
@@ -146,6 +191,7 @@ impl Remote {
         let mut i = self.inner.lock().unwrap();
         i.snapshot = None;
         i.pin.clear();
+        i.devices.clear();
     }
 
     pub fn running(&self) -> bool {
@@ -160,10 +206,20 @@ impl Remote {
 
     /// Forgets every paired device.
     pub fn unpair_all(&self) {
-        self.inner.lock().unwrap().tokens.clear();
+        {
+            let mut i = self.inner.lock().unwrap();
+            i.tokens.clear();
+            i.devices.clear();
+        }
         if let Some(f) = self.on_tokens.lock().unwrap().as_ref() {
             f(Vec::new());
         }
+    }
+
+    /// Devices that reported in the last few seconds (phones, headsets).
+    pub fn devices(&self) -> Vec<Device> {
+        let i = self.inner.lock().unwrap();
+        i.devices.iter().filter(|(_, _, t)| t.elapsed() < DEVICE_TTL).map(|(_, d, _)| d.clone()).collect()
     }
 
     pub fn info(&self) -> Info {
@@ -235,6 +291,10 @@ fn handle(mut s: TcpStream, addr: SocketAddr, inner: &Mutex<Inner>, on_tokens: O
             if len > MAX_REQUEST {
                 return respond(&mut s, 400, r#"{"error":"grande demais"}"#);
             }
+            // some clients wait for this before sending the body
+            if len > 0 && head.to_ascii_lowercase().contains("expect: 100-continue") {
+                s.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+            }
             break (p + 4, len);
         }
     };
@@ -292,13 +352,22 @@ fn handle(mut s: TcpStream, addr: SocketAddr, inner: &Mutex<Inner>, on_tokens: O
             }
             respond(&mut s, 200, &serde_json::json!({"token": token}).to_string())
         }
-        ("GET", "/v1/snapshot") => {
+        // GET: read the PC. POST: same, and the body tells the PC about the device itself.
+        ("GET", "/v1/snapshot") | ("POST", "/v1/snapshot") => {
             let mut i = inner.lock().unwrap();
-            let ok = bearer.as_deref().is_some_and(|b| !b.is_empty() && i.tokens.iter().any(|t| same(t, b)));
-            if !ok {
+            let token = bearer.as_deref().and_then(|b| (!b.is_empty()).then(|| i.tokens.iter().find(|t| same(t, b)).cloned()).flatten());
+            let Some(token) = token else {
                 return respond(&mut s, 401, r#"{"error":"não pareado"}"#);
+            };
+            let mut name = i.last_client.as_ref().map(|(n, _)| n.clone()).unwrap_or_else(|| addr.ip().to_string());
+            if method == "POST" {
+                if let Ok(d) = serde_json::from_str::<Device>(&body) {
+                    let d = d.clean(&addr.ip().to_string());
+                    name = d.name.clone();
+                    i.devices.retain(|(t, _, at)| t != &token && at.elapsed() < DEVICE_TTL);
+                    i.devices.push((token, d, Instant::now()));
+                }
             }
-            let name = i.last_client.as_ref().map(|(n, _)| n.clone()).unwrap_or_else(|| addr.ip().to_string());
             i.last_client = Some((name, Instant::now()));
             let body = i.snapshot.as_ref().map(|x| serde_json::to_string(x).unwrap_or_default()).unwrap_or_else(|| "{}".into());
             drop(i);
@@ -343,7 +412,72 @@ mod tests {
         assert_ne!(r.info().pin, pin, "PIN changes after pairing");
         let snap = http(port, &format!("GET /v1/snapshot HTTP/1.1\r\nAuthorization: Bearer {token}\r\n\r\n"));
         assert!(snap.starts_with("HTTP/1.1 200") && snap.contains("\"cpu_load\":12.0"), "{snap}");
+        let dev = r#"{"name":"Quest 2","battery":81.0,"charging":true,"thermal":1,"wifi_rssi":-52,"battery_temp":999}"#;
+        let resp = http(port, &format!("POST /v1/snapshot HTTP/1.1\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n{dev}", dev.len()));
+        assert!(resp.starts_with("HTTP/1.1 200") && resp.contains("\"cpu_load\":12.0"), "{resp}");
+        let d = r.devices();
+        assert_eq!(d.len(), 1);
+        assert_eq!((d[0].name.as_str(), d[0].battery, d[0].charging, d[0].battery_temp), ("Quest 2", Some(81.0), true, None));
         assert!(http(port, "DELETE /v1/snapshot HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"));
         r.stop();
     }
+}
+
+/// Name of the inbound rule Mark II creates for the LAN server (Windows).
+#[cfg(windows)]
+const FW_RULE: &str = "Mark II (app na rede local)";
+
+/// Whether the Windows firewall has Mark II's own allow rule (no admin needed to read).
+#[cfg(windows)]
+pub fn firewall_ok() -> bool {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("netsh")
+        .args(["advfirewall", "firewall", "show", "rule"])
+        .arg(format!("name={FW_RULE}"))
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+pub fn firewall_ok() -> bool {
+    true
+}
+
+/// Replaces every firewall rule for this exe (including stale "block" ones Windows creates
+/// when its prompt is dismissed) with one TCP allow rule for `port`, reachable only from the
+/// local subnet. Asks UAC once. Err("cancelado") when UAC is declined.
+#[cfg(windows)]
+pub fn allow_firewall(port: u16) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.to_string_lossy();
+    let sys = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    let cmd = std::path::PathBuf::from(&sys).join(r"System32\cmd.exe");
+    let args = format!(
+        "/c netsh advfirewall firewall delete rule name=all dir=in program=\"{exe}\" & \
+         netsh advfirewall firewall delete rule name=\"{FW_RULE}\" & \
+         netsh advfirewall firewall add rule name=\"{FW_RULE}\" dir=in action=allow enable=yes \
+         program=\"{exe}\" protocol=TCP localport={port} remoteip=localsubnet profile=any"
+    );
+    let h = match crate::lhm::elevate(&cmd, &args, true) {
+        Ok(h) => h,
+        Err(1223) => return Err("cancelado".into()),
+        Err(e) => return Err(format!("erro {e}")),
+    };
+    let mut code = 1u32;
+    if !h.is_null() {
+        unsafe {
+            GetExitCodeProcess(h, &mut code);
+            CloseHandle(h);
+        }
+    }
+    if code == 0 && firewall_ok() { Ok(()) } else { Err(format!("o netsh falhou (código {code})")) }
+}
+
+#[cfg(not(windows))]
+pub fn allow_firewall(_port: u16) -> Result<(), String> {
+    Ok(())
 }
