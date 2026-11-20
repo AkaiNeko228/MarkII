@@ -30,11 +30,24 @@ fn loc_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"(?i)channel\s*([A-H])\W*dimm\s*(\d)").unwrap())
 }
 
+/// How many memory slots the board has. Many BIOSes copy a 4-slot SMBIOS template,
+/// so a board with an Intel chipset limited to one DIMM per channel (H310, H410,
+/// H510, H610) is capped at 2, unless more modules are actually installed.
+pub fn slot_count(pc: &PcInfo) -> usize {
+    static R: OnceLock<Regex> = OnceLock::new();
+    let one_dpc = R.get_or_init(|| Regex::new(r"(?i)\bH[3-6]10").unwrap());
+    let mut n = pc.ram_slots as usize;
+    if n > 2 && one_dpc.is_match(&pc.board) {
+        n = 2;
+    }
+    n.max(pc.ram.len())
+}
+
 /// Builds the list of slots the board reports, marking the populated ones.
 /// SMBIOS gives the slot count and each module's locator ("ChannelB-DIMM0");
 /// empty slot names are inferred from that pattern when the board uses it.
 pub fn slots(pc: &PcInfo) -> Vec<Slot> {
-    let n = (pc.ram_slots as usize).max(pc.ram.len());
+    let n = slot_count(pc);
     if n == 0 {
         return Vec::new();
     }
@@ -85,5 +98,21 @@ pub fn channel_mode(pc: &PcInfo) -> &'static str {
         2 => "Dual channel",
         3 => "Triple channel",
         _ => "Quad channel",
+    }
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+
+    #[test]
+    fn h310_has_two_slots_even_if_smbios_says_four() {
+        let m = RamModule { slot: "ChannelB-DIMM0".into(), size_gb: 16.0, ..Default::default() };
+        let pc = PcInfo { board: "H310M H 2.0".into(), ram_slots: 4, ram: vec![m.clone()], ..Default::default() };
+        let s = slots(&pc);
+        assert_eq!(s.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["A0", "B0"]);
+        assert!(s[1].module.is_some());
+        let b450 = PcInfo { board: "B450M DS3H".into(), ram_slots: 4, ram: vec![m], ..Default::default() };
+        assert_eq!(slot_count(&b450), 4);
     }
 }

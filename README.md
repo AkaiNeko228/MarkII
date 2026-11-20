@@ -179,6 +179,7 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
   - Processadores AMD antigos (FX "Eight-Core", Athlon "Dual-Core", Phenom) não aparecem mais como Intel.
   - Adaptadores de vídeo virtuais (Virtual Desktop, Parsec, área de trabalho remota...) não são mais escolhidos como a GPU monitorada.
   - O indicador NVML só fica verde com uma placa NVIDIA.
+  - Placas com chipset Intel H310/H410/H510/H610 mostram 2 slots de RAM (a BIOS de muitas informa 4).
 - Painel da CPU sem espaço vazio em processadores com poucos núcleos.
 
 ## Próximos sprints

@@ -571,7 +571,7 @@ impl Dashboard {
         };
         let volt = m0.filter(|m| m.mv > 0).map(|m| m.mv as f64 / 1000.0).or(t.hw.board.dram_v);
         let temp = t.hw.spd.iter().filter_map(|s| s.temp).reduce(f64::max);
-        let slots_n = pc.map(|p| p.ram_slots).unwrap_or(0);
+        let slots_n = pc.map(|p| ram::slot_count(p) as u32).unwrap_or(0);
         let mode = pc.map(ram::channel_mode).unwrap_or("—");
         let cells = vec![
             cell("Frequência", if mts > 0 { format!("{mts} MT/s") } else { "—".into() }, None, (mts > 0).then(|| format!("{} MHz reais · {kind}", mts / 2))),
