@@ -154,6 +154,10 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
   - Usa o `openvr_api` oficial da Valve (OpenVR 2.15.6, BSD-3) pela API C; o painel é desenhado em software (tiny-skia + ab_glyph).
 - **App Android** (`android/`, Kotlin, sem bibliotecas extras): janela 2D para Quest 3/3S, Quest 2/Pro, Pico 4 e celulares. Instalação por sideload (adb, SideQuest ou modo desenvolvedor do Pico). O APK é gerado pelo GitHub Actions (`.github/workflows/android.yml`).
 - **Acesso pela rede local** para o app (Configurações → Celular e óculos), desligado por padrão: só com a janela do Mark II aberta, só rede local, pareamento com PIN de 6 dígitos (troca a cada pareamento; 5 erros trocam o PIN e pausam 30 s), token por aparelho e só leitura (`/v1/hello`, `/v1/pair`, `/v1/snapshot`). "Desconectar todos" remove os aparelhos pareados.
+  - **Liberar no firewall**: se o Windows estiver bloqueando, o botão troca as regras do `markii.exe` por uma só (TCP, porta do Mark II, só a sub-rede local), com um UAC.
+- **Óculos / celular no PC**: o app manda o status do próprio aparelho junto com cada leitura (bateria e se está carregando, temperatura da bateria, aquecimento do sistema, memória, armazenamento livre, sinal do Wi-Fi, tempo ligado) e o Mark II mostra num painel "Óculos / celular". Só números de status; dá para desligar no app.
+- **Temas no app Android**: Material You (cores do papel de parede, Android 12+) e os 8 temas do Mark II, no botão **Tema**.
+- O APK é assinado sempre com a mesma chave (segredo do GitHub), então as atualizações instalam por cima.
 
 ## Próximos sprints
 
