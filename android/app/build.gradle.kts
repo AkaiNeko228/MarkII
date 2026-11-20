@@ -19,11 +19,25 @@ android {
         versionCode = markiiVersion.split(".").map { it.toIntOrNull() ?: 0 }.let { (it.getOrElse(0) { 0 } * 10000) + (it.getOrElse(1) { 0 } * 100) + it.getOrElse(2) { 0 } }
     }
 
+    // Fixed key so updates install over the old app (CI: GitHub secrets).
+    // Without it (local builds) the release falls back to the debug key.
+    val ks = System.getenv("MARKII_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (ks != null) {
+            create("markii") {
+                storeFile = ks
+                storePassword = System.getenv("MARKII_KEYSTORE_PASSWORD")
+                keyAlias = "markii"
+                keyPassword = System.getenv("MARKII_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             // installed by sideload (adb / SideQuest / Pico developer mode); not a store build
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("markii") ?: signingConfigs.getByName("debug")
         }
     }
 

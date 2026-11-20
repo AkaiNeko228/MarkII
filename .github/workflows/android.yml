@@ -30,13 +30,23 @@ jobs:
 
       - name: Build
         id: build
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          MARKII_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/markii.jks"
+            export MARKII_KEYSTORE="$RUNNER_TEMP/markii.jks"
+          else
+            echo "::warning::no signing key secret; using a throwaway debug key"
+          fi
           ver=$(grep -m1 '^version' crates/markii-gpui/Cargo.toml | cut -d'"' -f2)
           gradle -p android --no-daemon assembleRelease -PmarkiiVersion=$ver
           mkdir -p dist
           cp android/app/build/outputs/apk/release/app-release.apk dist/MarkII-v$ver-android.apk
           echo "file=dist/MarkII-v$ver-android.apk" >> "$GITHUB_OUTPUT"
           ls -la dist
+          rm -f "$RUNNER_TEMP/markii.jks"
 
       - uses: actions/upload-artifact@v4
         with:
