@@ -25,6 +25,13 @@ object DeviceInfo {
         return if (m.startsWith(brand, ignoreCase = true)) m else "$brand $m"
     }
 
+    fun wifiQuality(rssi: Int) = when {
+        rssi >= -55 -> "ótimo"
+        rssi >= -67 -> "bom"
+        rssi >= -75 -> "fraco"
+        else -> "ruim"
+    }
+
     fun collect(ctx: Context): JSONObject {
         val j = JSONObject().put("name", name())
         runCatching {

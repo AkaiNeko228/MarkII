@@ -64,6 +64,9 @@ data class Snap(
     val gpuLoad: Double?,
     val gpuTemp: Double?,
     val gpuPower: Double?,
+    val gpuHotspot: Double?,
+    val gpuClock: Long?,
+    val gpuFan: Long?,
     val vramUsed: Long?,
     val vramTotal: Long?,
     val ramUsed: Long,
@@ -72,6 +75,10 @@ data class Snap(
     val netTx: Double,
     val fans: List<Pair<String, Double>>,
     val alerts: List<String>,
+    /** Load of each logical thread, 0-100 (PC v0.7.2+; empty before). */
+    val cores: List<Double> = emptyList(),
+    /** (drive, used, total) */
+    val disks: List<Triple<String, Long, Long>> = emptyList(),
 ) {
     val ramPct: Double get() = if (ramTotal > 0) ramUsed * 100.0 / ramTotal else 0.0
 
@@ -85,6 +92,15 @@ data class Snap(
                 for (i in 0 until a.length()) {
                     val f = a.optJSONArray(i) ?: continue
                     fans.add(f.optString(0) to f.optDouble(1))
+                }
+            }
+            val cores = mutableListOf<Double>()
+            (j.optJSONArray("cores") ?: JSONArray()).let { a -> for (i in 0 until a.length()) cores.add(a.optDouble(i, 0.0)) }
+            val disks = mutableListOf<Triple<String, Long, Long>>()
+            (j.optJSONArray("disks") ?: JSONArray()).let { a ->
+                for (i in 0 until a.length()) {
+                    val d = a.optJSONArray(i) ?: continue
+                    disks.add(Triple(d.optString(0), d.optLong(1), d.optLong(2)))
                 }
             }
             val alerts = mutableListOf<String>()
@@ -101,6 +117,9 @@ data class Snap(
                 gpuLoad = j.num("gpu_load"),
                 gpuTemp = j.num("gpu_temp"),
                 gpuPower = j.num("gpu_power"),
+                gpuHotspot = j.num("gpu_hotspot"),
+                gpuClock = j.long("gpu_clock"),
+                gpuFan = j.long("gpu_fan"),
                 vramUsed = j.long("vram_used"),
                 vramTotal = j.long("vram_total"),
                 ramUsed = j.long("ram_used") ?: 0,
@@ -109,6 +128,8 @@ data class Snap(
                 netTx = j.num("net_tx") ?: 0.0,
                 fans = fans,
                 alerts = alerts,
+                cores = cores,
+                disks = disks,
             )
         }
     }

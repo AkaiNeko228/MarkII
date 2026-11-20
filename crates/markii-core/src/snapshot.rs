@@ -31,6 +31,12 @@ pub struct Snapshot {
     pub fans: Vec<(String, f64)>,
     /// titles of active alerts
     pub alerts: Vec<String>,
+    /// Load of each logical thread, 0-100 (v0.7.2+).
+    #[serde(default)]
+    pub cores: Vec<f32>,
+    /// (drive, used bytes, total bytes), e.g. ("C:", ...) (v0.7.2+).
+    #[serde(default)]
+    pub disks: Vec<(String, u64, u64)>,
 }
 
 impl Snapshot {
@@ -59,6 +65,17 @@ impl Snapshot {
             net_tx: t.net.tx_bps,
             fans: t.fans.iter().map(|f| (f.label.clone(), f.rpm)).collect(),
             alerts: t.alerts.iter().map(|a| a.title.clone()).collect(),
+            cores: t.cpu.cores.iter().map(|c| (c.load * 10.0).round() / 10.0).collect(),
+            disks: t
+                .disks
+                .iter()
+                .filter(|d| d.total > 0)
+                .take(8)
+                .map(|d| {
+                    let m = d.mount.trim_end_matches(['\\', '/']);
+                    (if m.is_empty() { d.name.clone() } else { m.to_string() }, d.used, d.total)
+                })
+                .collect(),
         }
     }
 
