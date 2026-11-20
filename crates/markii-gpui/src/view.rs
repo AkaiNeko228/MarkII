@@ -872,7 +872,7 @@ impl Dashboard {
                         }))),
                     )
                     .child(h3("Janela"))
-                    .when(crate::HAS_TRAY, |d| d.child(toggle("t-tray", "Fechar minimiza para a bandeja", s.close_to_tray, |s| s.close_to_tray = !s.close_to_tray)))
+                    .child(small("Fechar a janela encerra o Mark II e tudo o que ele abriu (sensores e OpenRGB); nada fica rodando em segundo plano.", MUTED))
                     .child(
                         div()
                             .flex()

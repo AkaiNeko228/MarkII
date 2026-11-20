@@ -1,6 +1,6 @@
 [package]
 name = "markii-tauri"
-version = "0.6.0"
+version = "0.6.1"
 description = "Mark II PC monitor - Tauri (web UI) front end"
 edition = "2021"
 

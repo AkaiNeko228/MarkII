@@ -43,10 +43,7 @@ static HWND: AtomicIsize = AtomicIsize::new(0);
 
 #[cfg(windows)]
 mod win {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE, SW_RESTORE, SW_SHOW};
-    pub fn hide(h: isize) {
-        unsafe { ShowWindow(h as _, SW_HIDE) };
-    }
+    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW};
     pub fn show(h: isize) {
         unsafe {
             if IsIconic(h as _) != 0 {
@@ -125,23 +122,18 @@ fn main() {
             rgb: None,
         });
         let v2 = view.clone();
-        let cfg_close = cfg.clone();
         cx.open_window(opts, move |window, cx| {
             if let Ok(h) = window.window_handle() {
                 if let RawWindowHandle::Win32(w) = h.as_raw() {
                     HWND.store(w.hwnd.get(), Ordering::Relaxed);
                 }
             }
+            // Closing the window always ends Mark II and its helpers (OpenRGB, sensors):
+            // nothing is left running in the background.
             window.on_window_should_close(cx, move |_, cx| {
-                if HAS_TRAY && cfg_close.lock().unwrap().close_to_tray {
-                    #[cfg(windows)]
-                    win::hide(HWND.load(Ordering::Relaxed));
-                    false
-                } else {
-                    markii_core::rgb::global().stop();
-                    cx.quit();
-                    true
-                }
+                markii_core::rgb::global().stop();
+                cx.quit();
+                true
             });
             v2
         })
@@ -206,7 +198,7 @@ fn main() {
                 while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
                         #[cfg(windows)]
-                        if visible { win::hide(hwnd) } else { win::show(hwnd) }
+                        win::show(hwnd);
                     }
                 }
                 #[cfg(windows)]

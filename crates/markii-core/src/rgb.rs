@@ -491,6 +491,15 @@ impl Rgb {
         let args = ["--server", "--server-host", "127.0.0.1", "--server-port", &PORT.to_string(), "--noautoconnect", "--config", &cfg_s];
         #[cfg(windows)]
         {
+            // Normally OpenRGB runs under markii-sensors.exe --openrgb, which keeps it in a
+            // kill-on-close job and ends it when Mark II ends (even if Mark II is killed),
+            // so nothing stays in the background. Direct launch is only a dev fallback.
+            let pid = std::process::id().to_string();
+            let watch = ["--openrgb", "--parent", pid.as_str()];
+            let (exe, args): (PathBuf, Vec<&str>) = match crate::lhm::helper_path() {
+                Some(h) => (h, watch.to_vec()),
+                None => (exe, args.to_vec()),
+            };
             let line = args.iter().map(|a| if a.contains(' ') { quote(a) } else { a.to_string() }).collect::<Vec<_>>().join(" ");
             let h = if admin {
                 crate::lhm::elevate(&exe, &line, false).or_else(|e| if e == 1223 { spawn(&exe, &args) } else { Err(format!("erro {e}")) })
@@ -503,13 +512,24 @@ impl Rgb {
         #[cfg(not(windows))]
         {
             let _ = admin;
-            let child = std::process::Command::new(&exe).args(args).spawn().map_err(|e| Status::Failed(e.to_string()))?;
+            use std::os::unix::process::CommandExt;
+            let mut cmd = std::process::Command::new(&exe);
+            cmd.args(args);
+            // the kernel kills OpenRGB when Mark II ends, even if Mark II crashes
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                    Ok(())
+                });
+            }
+            let child = cmd.spawn().map_err(|e| Status::Failed(e.to_string()))?;
             self.st.lock().unwrap().child = Some(child);
         }
         Ok(())
     }
 
-    /// Closes the OpenRGB server Mark II started (called when Mark II quits).
+    /// Closes the OpenRGB server Mark II started (when the RGB window closes and when
+    /// Mark II quits). Colors already applied stay on the hardware.
     pub fn stop(&self) {
         let mut st = self.st.lock().unwrap();
         #[cfg(windows)]
@@ -524,6 +544,7 @@ impl Rgb {
             let _ = c.kill();
         }
         st.status = Status::Off;
+        st.devices.clear();
     }
 
     /// Re-reads one device after a change.

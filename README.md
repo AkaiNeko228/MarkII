@@ -97,7 +97,7 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - **Este PC**: fabricante/modelo, placa-mãe, BIOS, Windows, CPU, cada pente de RAM, GPU e driver, modelo de cada disco, com dicas (ex.: RAM em single channel).
 - **Refrigeração**: detecta water cooler ou air cooler (bomba nos sensores do HWiNFO ou controlador USB de AIO conhecido) e mostra o desenho correspondente com ventoinhas/bomba animadas. Dá para escolher manualmente nas configurações.
 - **Alertas**: CPU, GPU, RAM e discos acima do limite por X segundos → faixa vermelha no app + notificação do Windows, com intervalo para não repetir.
-- **Bandeja**: fechar a janela minimiza para a bandeja; o ícone mostra CPU/GPU/RAM no tooltip; clique abre/esconde; menu com "Sair".
+- **Bandeja**: o ícone mostra CPU/GPU/RAM no tooltip; clique traz a janela para frente; menu com "Sair". Fechar a janela encerra o app (desde a v0.6.1).
 - Configurações salvas em `%APPDATA%\com.akaineko.markii\config.json`.
 
 ## Sprint 4
@@ -129,6 +129,13 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
   - **Cores mantidas sem abrir o app**: grava na memória do dispositivo quando ele suporta e salva o perfil "MarkII"; "Reaplicar ao ligar o PC" cria a tarefa **Mark II RGB** no Agendador do Windows (com administrador, para RAM/GPU via SMBus) ou `~/.config/autostart/markii-rgb.desktop` no Linux.
   - Windows: RAM, GPU e placa-mãe precisam do driver PawnIO e de administrador. Linux: regras udev do OpenRGB e `i2c-dev` (veja o LEIA-ME).
 - Temas novos (só GPUI): **Carmesim** (preto com vermelho carmesim) e **Azul profundo**.
+
+## v0.6.1
+
+- **Nada fica rodando em segundo plano**: fechar a janela encerra o Mark II, o auxiliar de sensores e o OpenRGB (o ícone da bandeja só mostra os números e reabre a janela; não minimiza mais para a bandeja).
+- O OpenRGB só roda enquanto a janela de RGB está aberta; ao fechá-la ele é encerrado e as cores continuam no hardware.
+- O OpenRGB roda dentro de um *job* do Windows ligado ao Mark II (`markii-sensors.exe --openrgb`): se o Mark II for fechado à força ou travar, o Windows encerra o OpenRGB junto. No Linux, o kernel faz o mesmo (`PR_SET_PDEATHSIG`).
+- A tarefa de login "Mark II RGB" só aplica o perfil e fecha o OpenRGB em seguida.
 
 ## Próximos sprints
 

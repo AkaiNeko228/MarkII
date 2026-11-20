@@ -379,6 +379,8 @@ impl Dashboard {
                                     .text_color(c(MUTED))
                                     .hover(|s| s.text_color(c(TEXT)))
                                     .on_click(cx.listener(|this, _, _, cx| {
+                                        // colors stay on the hardware; OpenRGB does not stay running
+                                        rgb::global().stop();
                                         this.rgb = None;
                                         cx.notify();
                                     }))
