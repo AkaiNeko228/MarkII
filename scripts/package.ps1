@@ -90,6 +90,20 @@ cria a tarefa "Mark II RGB" no Agendador de Tarefas, que aplica as cores salvas 
 login sem abrir o Mark II (para remover, desmarque a opcao).
 "@
 
+$licOpenVr = @"
+
+openvr_api.dll (so na versao GPUI) - OpenVR SDK 2.15.6 da Valve, binario oficial sem modificacao.
+  Licenca: BSD 3-Clause (OpenVR-BSD-3.txt). https://github.com/ValveSoftware/openvr
+"@
+
+$vrNote = @"
+
+VR (botao "VR" no topo ou Configuracoes > Realidade virtual): mostra um painel do
+Mark II no pulso esquerdo dentro do SteamVR (Quest via Link/Air Link/Virtual Desktop,
+Index, Vive...). Desligado por padrao. Nao abre o SteamVR sozinho e fecha junto com
+o Mark II; desligado, nao roda nada.
+"@
+
 $builds = @(
     @{ name = "windows-x64";       exe = "MarkII.exe";       src = "target\release\markii.exe";       label = "GPUI (nativa)"; rgb = $true },
     @{ name = "tauri-windows-x64"; exe = "MarkII-Tauri.exe"; src = "target\release\markii-tauri.exe"; label = "Tauri (interface web, requer WebView2)"; rgb = $false }
@@ -110,9 +124,12 @@ foreach ($b in $builds) {
         Copy-Item $orgbDir "$dir\openrgb" -Recurse
         Copy-Item "$orgbDir\LICENSE" "$dir\licencas\OpenRGB-GPL-2.0.txt" -ErrorAction SilentlyContinue
         if (-not (Test-Path "$dir\licencas\OpenRGB-GPL-2.0.txt")) { Copy-Item "vendor\pawnio\COPYING.txt" "$dir\licencas\OpenRGB-GPL-2.0.txt" }
+        # SteamVR overlay: official OpenVR runtime loader (BSD-3-Clause)
+        Copy-Item "vendor\openvr\openvr_api.dll" $dir
+        Copy-Item "vendor\openvr\LICENSE" "$dir\licencas\OpenVR-BSD-3.txt"
     }
-    [IO.File]::WriteAllText("$root\$dir\licencas\LEIA-ME-LICENCAS.txt", $licNote + $(if ($b.rgb) { $licOpenRgb } else { "" }))
-    [IO.File]::WriteAllText("$root\$dir\LEIA-ME.txt", (Readme $b.exe $b.label) + $(if ($b.rgb) { $rgbNote } else { "" }))
+    [IO.File]::WriteAllText("$root\$dir\licencas\LEIA-ME-LICENCAS.txt", $licNote + $(if ($b.rgb) { $licOpenRgb + $licOpenVr } else { "" }))
+    [IO.File]::WriteAllText("$root\$dir\LEIA-ME.txt", (Readme $b.exe $b.label) + $(if ($b.rgb) { $rgbNote + $vrNote } else { "" }))
 
     $zip = "dist\MarkII-v$ver-$($b.name).zip"
     if (Test-Path $zip) { Remove-Item -Force $zip }
@@ -124,7 +141,7 @@ foreach ($b in $builds) {
     $names = $z.Entries | ForEach-Object { $_.FullName -replace '/', '\' }
     $z.Dispose()
     $need = @($b.exe) + $required
-    if ($b.rgb) { $need += @("openrgb\OpenRGB.exe", "openrgb\PawnIOLib.dll", "licencas\OpenRGB-GPL-2.0.txt") }
+    if ($b.rgb) { $need += @("openrgb\OpenRGB.exe", "openrgb\PawnIOLib.dll", "licencas\OpenRGB-GPL-2.0.txt", "openvr_api.dll", "licencas\OpenVR-BSD-3.txt") }
     foreach ($f in $need) {
         if ($names -notcontains $f) { throw "$zip is missing $f" }
     }

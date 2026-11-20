@@ -287,7 +287,39 @@ impl Dashboard {
                                 cx.notify();
                             }))
                             .child("◆  RGB"),
-                    ),
+                    )
+                    .child({
+                        // VR mode on/off in one click (off = no overlay process at all)
+                        let on = self.cfg().vr_overlay;
+                        div()
+                            .id("toggle-vr")
+                            .px(px(12.))
+                            .py(px(6.))
+                            .border_1()
+                            .rounded(px(6.))
+                            .text_size(px(12.))
+                            .cursor_pointer()
+                            .when(on, |d| d.border_color(c(GREEN)).text_color(c(GREEN)))
+                            .when(!on, |d| d.border_color(c(LINE2)).text_color(c(MUTED)).hover(|s| s.text_color(c(TEXT)).border_color(c(MUTED))))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let on = {
+                                    let mut c0 = this.cfg.lock().unwrap();
+                                    c0.vr_overlay = !c0.vr_overlay;
+                                    let _ = c0.save(&this.cfg_path);
+                                    c0.vr_overlay
+                                };
+                                if let Some(s) = this.settings.as_mut() {
+                                    s.vr_overlay = on;
+                                }
+                                if on {
+                                    crate::vr::global().start();
+                                } else {
+                                    crate::vr::global().stop();
+                                }
+                                cx.notify();
+                            }))
+                            .child(if on { "◉  VR ligado" } else { "○  VR" })
+                    }),
             )
     }
 
@@ -871,6 +903,52 @@ impl Dashboard {
                             cx.notify();
                         }))),
                     )
+                    .child(h3("Realidade virtual"))
+                    .child(toggle("t-vr", "Painel do Mark II no SteamVR (pulso esquerdo)", s.vr_overlay, |s| s.vr_overlay = !s.vr_overlay))
+                    .child(small(
+                        "Aparece quando o SteamVR está aberto (Quest via Link, Air Link ou Virtual Desktop, Index, Vive...). Não abre o SteamVR sozinho e fecha junto com o Mark II.",
+                        MUTED,
+                    ))
+                    .child(h3("Celular e óculos (app Android)"))
+                    .child(toggle("t-remote", "Permitir o app Mark II na rede local (só leitura, com PIN)", s.remote_enabled, |s| s.remote_enabled = !s.remote_enabled))
+                    .child({
+                        let info = markii_core::remote::global().info();
+                        if info.running {
+                            div()
+                                .mt(px(6.))
+                                .p(px(10.))
+                                .rounded(px(4.))
+                                .bg(c(PANEL2))
+                                .flex()
+                                .items_center()
+                                .gap(px(18.))
+                                .child(div().child(label("Endereço")).child(num(info.address.clone(), 15.)))
+                                .child(div().child(label("PIN")).child(num(info.pin.clone(), 22.).text_color(c(AMBER))))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(small(format!("{} aparelho(s) pareado(s)", info.paired), MUTED))
+                                        .child(small(info.connected.clone().map_or("nenhum conectado agora".to_string(), |n| format!("conectado: {n}")), if info.connected.is_some() { GREEN } else { DIM }))
+                                        .when_some(info.error.clone(), |d, e| d.child(small(e, RED))),
+                                )
+                                .when(info.paired > 0, |d| {
+                                    d.child(btn("unpair", "Desconectar todos", false).on_click(cx.listener(|_, _, _, cx| {
+                                        markii_core::remote::global().unpair_all();
+                                        cx.notify();
+                                    })))
+                                })
+                        } else {
+                            div().child(small(
+                                if s.remote_enabled { "Clique em Salvar para ligar. O Windows pode pedir para liberar o Mark II no firewall (rede privada)." } else { "Desligado: nenhuma porta aberta." },
+                                MUTED,
+                            ))
+                        }
+                    })
+                    .child(small(
+                        "No óculos ou celular, abra o app Mark II, digite o endereço e o PIN. Só funciona com esta janela aberta e na mesma rede; o app só lê os números.",
+                        DIM,
+                    ))
                     .child(h3("Janela"))
                     .child(small("Fechar a janela encerra o Mark II e tudo o que ele abriu (sensores e OpenRGB); nada fica rodando em segundo plano.", MUTED))
                     .child(
@@ -888,9 +966,27 @@ impl Dashboard {
                             .child(btn("save", "Salvar", true).on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(s) = this.settings.take() {
                                     let mut c0 = this.cfg.lock().unwrap();
-                                    let (interval, view) = (c0.interval_ms, c0.cpu_view.clone());
-                                    *c0 = Config { interval_ms: interval, cpu_view: view, ..s };
+                                    let (interval, view, tokens) = (c0.interval_ms, c0.cpu_view.clone(), c0.remote_tokens.clone());
+                                    *c0 = Config { interval_ms: interval, cpu_view: view, remote_tokens: tokens, ..s };
                                     let _ = c0.save(&this.cfg_path);
+                                    if c0.vr_overlay {
+                                        crate::vr::global().start();
+                                    } else {
+                                        crate::vr::global().stop();
+                                    }
+                                    let remote = c0.remote_enabled;
+                                    drop(c0);
+                                    if remote {
+                                        let was_running = markii_core::remote::global().running();
+                                        crate::start_remote(&this.cfg, &this.cfg_path);
+                                        if !was_running {
+                                            // keep the sheet open so the address and PIN can be read
+                                            this.settings = Some(this.cfg.lock().unwrap().clone());
+                                            this.save_msg = "salvo · use o endereço e o PIN acima".into();
+                                        }
+                                    } else {
+                                        markii_core::remote::global().stop();
+                                    }
                                 }
                                 cx.notify();
                             }))),

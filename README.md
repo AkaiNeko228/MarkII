@@ -78,15 +78,19 @@ crates/markii-core/   coleta de dados, sem interface
   pcinfo_linux.rs     identificação do PC no Linux (/sys, lspci, dmidecode)
   alerts.rs           configuração e motor de alertas
   rgb.rs              controle de RGB: cliente do SDK do OpenRGB, processo e reaplicar no login
+  snapshot.rs         resumo dos números para o overlay de VR e o app Android
+  remote.rs           servidor só leitura na rede local para o app Android (PIN + token)
 crates/markii-gpui/   app nativo GPUI
   view.rs             layout, cabeçalho, Este PC, refrigeração, temperaturas, configurações
   panels.rs           CPU (núcleos/threads), GPU, memória, placa-mãe, ventoinhas, aviso de sensores
   draw.rs             gráficos e sprites desenhados (barras, linhas, ventoinhas, coolers)
   theme.rs            temas (grafite, roxo, carmesim, azul profundo, pastel) e troca de cores
   rgb_view.rs         janela de controle de RGB
+  vr.rs               painel no SteamVR (processo --vr-overlay, OpenVR)
   main.rs             janela, bandeja, notificações, thread de coleta
 sensors/              auxiliar .NET com LibreHardwareMonitorLib (roda com admin)
 src-tauri/ + ui/      versão Tauri (interface web), usa o mesmo markii-core
+android/              app Android (Quest, Pico, celular) que lê o Mark II pela rede local
 ```
 
 As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
@@ -137,11 +141,19 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - O OpenRGB roda dentro de um *job* do Windows ligado ao Mark II (`markii-sensors.exe --openrgb`): se o Mark II for fechado à força ou travar, o Windows encerra o OpenRGB junto. No Linux, o kernel faz o mesmo (`PR_SET_PDEATHSIG`).
 - A tarefa de login "Mark II RGB" só aplica o perfil e fecha o OpenRGB em seguida.
 
-## v0.6.2 (pré-lançamento)
+## v0.6.2
 
 - **Cores voltam ao reiniciar o PC.** O OpenRGB 1.1 recusa "salvar perfil" vindo do SDK, então a v0.6.0/0.6.1 não tinha o que reaplicar. Agora o Mark II guarda cor, efeito e brilho de cada dispositivo em `rgb.json` (pasta de configurações) ao clicar em Aplicar, e a tarefa de login roda `MarkII.exe --apply-rgb`: sem janela, liga o OpenRGB, espera os dispositivos, reaplica, fecha o OpenRGB e sai. Cada execução fica anotada em `rgb-login.log`.
 - Botão **Excluir tarefa "Mark II RGB"** na janela de RGB.
 - A janela se ajusta à tela (no máximo 90% da largura e 80% da altura) e abre centralizada.
+
+## v0.7.0
+
+- **Painel no SteamVR**: botão **VR** no topo (ou Configurações → Realidade virtual) mostra CPU, GPU, RAM, ventoinhas e alertas no pulso esquerdo dentro do SteamVR (Quest via Link/Air Link/Virtual Desktop, Index, Vive...). Desligado por padrão.
+  - Roda num processo separado (`markii --vr-overlay`) que recebe os números do Mark II pelo stdin: não abre o SteamVR sozinho, se solta quando o SteamVR fecha e termina quando o Mark II termina. Desligado, não roda nada.
+  - Usa o `openvr_api` oficial da Valve (OpenVR 2.15.6, BSD-3) pela API C; o painel é desenhado em software (tiny-skia + ab_glyph).
+- **App Android** (`android/`, Kotlin, sem bibliotecas extras): janela 2D para Quest 3/3S, Quest 2/Pro, Pico 4 e celulares. Instalação por sideload (adb, SideQuest ou modo desenvolvedor do Pico). O APK é gerado pelo GitHub Actions (`.github/workflows/android.yml`).
+- **Acesso pela rede local** para o app (Configurações → Celular e óculos), desligado por padrão: só com a janela do Mark II aberta, só rede local, pareamento com PIN de 6 dígitos (troca a cada pareamento; 5 erros trocam o PIN e pausam 30 s), token por aparelho e só leitura (`/v1/hello`, `/v1/pair`, `/v1/snapshot`). "Desconectar todos" remove os aparelhos pareados.
 
 ## Próximos sprints
 

@@ -6,6 +6,7 @@ mod panels;
 mod rgb_view;
 mod theme;
 mod view;
+mod vr;
 
 use gpui::{px, size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
 use markii_core::{pcinfo, Collector, Config, PcInfo, Telemetry};
@@ -34,6 +35,24 @@ fn config_path() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
     base.unwrap_or_else(|| PathBuf::from(".")).join("com.akaineko.markii").join("config.json")
+}
+
+/// Starts the read-only server for the Android app; paired devices are saved in the config.
+pub fn start_remote(cfg: &Arc<Mutex<Config>>, path: &std::path::Path) {
+    let (port, tokens) = {
+        let c = cfg.lock().unwrap();
+        (c.remote_port, c.remote_tokens.clone())
+    };
+    let (cfg, path) = (cfg.clone(), path.to_path_buf());
+    markii_core::remote::global().start(
+        port,
+        tokens,
+        Box::new(move |t| {
+            let mut c = cfg.lock().unwrap();
+            c.remote_tokens = t;
+            let _ = c.save(&path);
+        }),
+    );
 }
 
 /// The tray needs GTK's own loop on Linux, which GPUI does not run: tray only on Windows.
@@ -79,6 +98,32 @@ fn main() {
         let _ = markii_core::rgb::apply_saved();
         return;
     }
+    // SteamVR wrist panel, started by Mark II itself (see vr.rs).
+    if std::env::args().any(|a| a == "--vr-overlay") {
+        std::process::exit(vr::run_overlay());
+    }
+    // Dev check of the wrist panel drawing: markii --vr-preview out.png
+    if let Some(i) = std::env::args().position(|a| a == "--vr-preview") {
+        let out = std::env::args().nth(i + 1).unwrap_or_else(|| "vr-preview.png".into());
+        let s = markii_core::snapshot::Snapshot {
+            v: 1,
+            host: "DESKTOP-MARKII".into(),
+            cpu_load: 37.0,
+            cpu_temp: Some(64.0),
+            cpu_power: Some(71.0),
+            gpu_load: Some(92),
+            gpu_temp: Some(78),
+            gpu_power: Some(186.0),
+            vram_used: Some(6_800_000_000),
+            vram_total: Some(8_589_934_592),
+            ram_used: 19_000_000_000,
+            ram_total: 34_359_738_368,
+            fans: vec![("CPU Fan".into(), 1180.0), ("System Fan #1".into(), 950.0), ("Pump".into(), 2400.0)],
+            ..Default::default()
+        };
+        let _ = vr::preview_png(std::path::Path::new(&out), &s);
+        return;
+    }
     let cfg_path = config_path();
     let cfg = Arc::new(Mutex::new(Config::load(&cfg_path)));
     theme::set_theme(&cfg.lock().unwrap().theme);
@@ -87,6 +132,13 @@ fn main() {
     {
         let pc = pc.clone();
         std::thread::spawn(move || *pc.lock().unwrap() = Some(pcinfo::collect()));
+    }
+
+    if cfg.lock().unwrap().vr_overlay {
+        vr::global().start();
+    }
+    if cfg.lock().unwrap().remote_enabled {
+        start_remote(&cfg, &cfg_path);
     }
 
     let (tx, rx) = mpsc::channel::<(Telemetry, Vec<markii_core::Active>)>();
@@ -98,7 +150,19 @@ fn main() {
                 let c = cfg.lock().unwrap().clone();
                 std::thread::sleep(Duration::from_millis(c.interval_ms.clamp(250, 10_000)));
                 let p = pc.lock().unwrap().clone();
-                if tx.send(col.sample(&c, p.as_ref())).is_err() {
+                let sample = col.sample(&c, p.as_ref());
+                let vr_on = vr::global().running();
+                let remote_on = markii_core::remote::global().running();
+                if vr_on || remote_on {
+                    let snap = markii_core::snapshot::Snapshot::from(&sample.0);
+                    if vr_on {
+                        vr::global().send(&snap);
+                    }
+                    if remote_on {
+                        markii_core::remote::global().publish(snap);
+                    }
+                }
+                if tx.send(sample).is_err() {
                     break;
                 }
             }
@@ -149,6 +213,8 @@ fn main() {
             // nothing is left running in the background.
             window.on_window_should_close(cx, move |_, cx| {
                 markii_core::rgb::global().stop();
+                vr::global().stop();
+                markii_core::remote::global().stop();
                 cx.quit();
                 true
             });
@@ -225,6 +291,8 @@ fn main() {
                         win::show(hwnd);
                     } else if ev.id == quit_id {
                         markii_core::rgb::global().stop();
+                        vr::global().stop();
+                        markii_core::remote::global().stop();
                         let _ = cx.update(|cx| cx.quit());
                     }
                 }

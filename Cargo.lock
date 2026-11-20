@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "ab_glyph"
+version = "0.2.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01c0457472c38ea5bd1c3b5ada5e368271cb550be7a4ca4a0b4634e9913f6cc2"
+dependencies = [
+ "ab_glyph_rasterizer",
+ "owned_ttf_parser",
+]
+
+[[package]]
+name = "ab_glyph_rasterizer"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4138,8 +4154,9 @@ dependencies = [
 
 [[package]]
 name = "markii-core"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
+ "getrandom 0.2.17",
  "libc",
  "nvml-wrapper",
  "regex",
@@ -4151,13 +4168,18 @@ dependencies = [
 
 [[package]]
 name = "markii-gpui"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
+ "ab_glyph",
  "gpui",
+ "libloading 0.8.9",
  "markii-core",
  "notify-rust",
  "png 0.17.16",
  "raw-window-handle",
+ "serde_json",
+ "sysinfo 0.33.1",
+ "tiny-skia",
  "tray-icon 0.26.1",
  "windows-sys 0.59.0",
  "winresource",
@@ -4165,7 +4187,7 @@ dependencies = [
 
 [[package]]
 name = "markii-tauri"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "markii-core",
  "serde",
@@ -5036,6 +5058,15 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "owned_ttf_parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
+dependencies = [
+ "ttf-parser 0.25.1",
 ]
 
 [[package]]

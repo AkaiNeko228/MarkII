@@ -55,10 +55,13 @@ jobs:
           echo "d556c2273b0ef863dbee7ffdb438304b382add5d685c93c60758b42de3b0268d  dist/$dir/OpenRGB.AppImage" | sha256sum -c -
           chmod +x dist/$dir/OpenRGB.AppImage
           cp packaging/linux/OpenRGB-LICENCA.txt dist/$dir/licencas/
+          # SteamVR overlay: official OpenVR loader (BSD-3-Clause), kept in vendor/openvr
+          cp vendor/openvr/libopenvr_api.so dist/$dir/
+          cp vendor/openvr/LICENSE dist/$dir/licencas/OpenVR-BSD-3.txt
           sed -i "s/@VERSION@/$ver/" dist/$dir/LEIA-ME.txt
           tar -C dist -czf dist/$dir.tar.gz $dir
           # the archive must contain the app and its notes
-          for f in markii LEIA-ME.txt markii.desktop markii.png OpenRGB.AppImage licencas/Simple-Icons-CC0.txt licencas/OpenRGB-LICENCA.txt; do
+          for f in markii LEIA-ME.txt markii.desktop markii.png OpenRGB.AppImage libopenvr_api.so licencas/Simple-Icons-CC0.txt licencas/OpenRGB-LICENCA.txt licencas/OpenVR-BSD-3.txt; do
             tar -tzf dist/$dir.tar.gz | grep -qx "$dir/$f" || { echo "missing $f"; exit 1; }
           done
           echo "file=dist/$dir.tar.gz" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,50 @@
+# Builds the Mark II Android app (2D panel for Quest / Pico / phones) and, for a
+# published release, attaches MarkII-v<version>-android.apk to it.
+name: android
+
+on:
+  push:
+    branches: [android]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Build
+        id: build
+        run: |
+          ver=$(grep -m1 '^version' crates/markii-gpui/Cargo.toml | cut -d'"' -f2)
+          gradle -p android --no-daemon assembleRelease -PmarkiiVersion=$ver
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/MarkII-v$ver-android.apk
+          echo "file=dist/MarkII-v$ver-android.apk" >> "$GITHUB_OUTPUT"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: markii-android
+          path: ${{ steps.build.outputs.file }}
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.build.outputs.file }}" --clobber

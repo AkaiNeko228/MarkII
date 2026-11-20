@@ -29,6 +29,13 @@ pub struct Config {
     pub cpu_view: String,
     /// "grafite" (default) | "roxo" | "carmesim" | "azul" (GPUI) | "lavanda" | "menta" (dark pastel) | "algodao" | "pistache" (light pastel)
     pub theme: String,
+    /// Show the Mark II panel inside SteamVR (left wrist) while SteamVR runs.
+    pub vr_overlay: bool,
+    /// Read-only access from the Android app over the local network (off by default).
+    pub remote_enabled: bool,
+    pub remote_port: u16,
+    /// Devices paired with a PIN; each holds one of these tokens.
+    pub remote_tokens: Vec<String>,
 }
 
 impl Default for Config {
@@ -48,6 +55,10 @@ impl Default for Config {
             sensors_admin: true,
             cpu_view: "cores".into(),
             theme: "grafite".into(),
+            vr_overlay: false,
+            remote_enabled: false,
+            remote_port: 47820,
+            remote_tokens: Vec::new(),
         }
     }
 }

@@ -14,6 +14,8 @@ pub mod pcinfo;
 mod pcinfo_linux;
 pub mod ram;
 pub mod rgb;
+pub mod remote;
+pub mod snapshot;
 
 pub use alerts::{Active, Config};
 pub use pcinfo::{Cooling, PcInfo};
