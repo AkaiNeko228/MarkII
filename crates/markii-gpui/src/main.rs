@@ -185,7 +185,7 @@ fn main() {
         std::thread::spawn(move || {
             let mut col = Collector::new();
             loop {
-                // a mode picked on the wrist panel with the laser: keep it
+                // a mode picked on the wrist panel by touch: keep it
                 if let Some(m) = vr::global().take_picked() {
                     let mut g = cfg.lock().unwrap();
                     g.vr_mode = m;

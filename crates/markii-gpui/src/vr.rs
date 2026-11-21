@@ -1,4 +1,4 @@
-//! SteamVR overlay: a small Mark II panel on the left wrist while SteamVR runs.
+//! SteamVR overlay: a small Mark II panel on the right wrist while SteamVR runs.
 //!
 //! It runs as a separate process (`markii --vr-overlay`) so that SteamVR, which
 //! ends overlay apps when it quits, can never take the Mark II window with it.
@@ -25,7 +25,7 @@ pub struct Vr {
     batteries: Arc<Mutex<(Instant, Vec<VrBattery>)>>,
     /// Panel settings last sent to the child (sent again only when they change).
     sent_cfg: Mutex<String>,
-    /// A mode picked on the panel itself with the laser, for Mark II to save.
+    /// A mode picked on the panel itself by touch, for Mark II to save.
     picked: Arc<Mutex<Option<String>>>,
 }
 
@@ -174,6 +174,7 @@ const H: u32 = 380;
 const EVENT_SIZE: u32 = 64; // sizeof(VREvent_t), openvr_capi.h 2.x
 const EVENT_QUIT: u32 = 700;
 const ROLE_LEFT_HAND: i32 = 1;
+const ROLE_RIGHT_HAND: i32 = 2;
 const INVALID_DEVICE: u32 = u32::MAX;
 // function-table indices (openvr_capi.h v2.15.6: IVRSystem_026, IVROverlay_028)
 const SYS_CONTROLLER_FOR_ROLE: usize = 18;
@@ -202,13 +203,32 @@ const OV_SET_WIDTH: usize = 22;
 const OV_SET_DEVICE_RELATIVE: usize = 35;
 const OV_SHOW: usize = 43;
 const OV_SET_RAW: usize = 62;
-const OV_SET_FLAG: usize = 11;
-const OV_POLL_EVENT: usize = 48;
-const OV_SET_INPUT_METHOD: usize = 50;
-const OV_SET_MOUSE_SCALE: usize = 52;
-const INPUT_MOUSE: i32 = 1;
-const FLAG_INTERACTIVE_IF_VISIBLE: i32 = 65536;
-const EVENT_MOUSE_UP: u32 = 302;
+const OV_HIDE: usize = 44;
+const OV_SET_SORT_ORDER: usize = 20;
+const SYS_POSES: usize = 12;
+const ORIGIN_STANDING: i32 = 1;
+const POSE_SIZE: usize = 80; // sizeof(TrackedDevicePose_t)
+/// Panel size in the world, in meters.
+const PANEL_W: f32 = 0.12;
+#[cfg(test)]
+const PANEL_H: f32 = PANEL_W * H as f32 / W as f32;
+/// What the left stick can resize the panel to while it is held, in meters.
+const SIZE_RANGE: (f32, f32) = (0.05, 0.6);
+/// The tip may be this far behind the panel's face and still point at it.
+const BEHIND: f32 = 0.05;
+const SYS_CONTROLLER_STATE: usize = 37;
+/// VRControllerState_t: 4-byte packing on Linux, natural on Windows.
+#[cfg(windows)]
+const STATE: (usize, usize, usize) = (64, 8, 32); // size, ulButtonPressed, rAxis[1].x (trigger; [2] is the grip)
+#[cfg(not(windows))]
+const STATE: (usize, usize, usize) = (60, 4, 28);
+const BUTTON_TRIGGER: u64 = 1 << 33;
+const BUTTON_GRIP: u64 = 1 << 2;
+/// Where the tip is, in the controller's own space (forward is -Z).
+const TIP: [f32; 3] = [0.0, -0.01, -0.06];
+/// The cursor dot shows while the tip is this close to the panel's face.
+const CURSOR_NEAR: f32 = 0.2;
+const CURSOR_PX: usize = 32;
 
 type Mat34 = [[f32; 4]; 3];
 
@@ -236,10 +256,159 @@ struct Session {
     lib: libloading::Library,
     sys: *const usize,
     ov: *const usize,
-    handle: u64,
+    /// Two overlays in the same spot: the new picture goes on the hidden one,
+    /// which then swaps with the visible one, so the panel never blinks.
+    handles: [u64; 2],
+    front: usize,
+    /// Hash of the picture on screen, to skip sending the same one again.
+    shown: u64,
+    /// The old picture stays under the new one for a moment (SteamVR shows
+    /// an overlay before its picture is ready), then hides.
+    hide_at: Option<(usize, Instant)>,
+    order: u32,
+    /// The user dragged the panel somewhere (saved in PLACE_FILE).
+    custom: bool,
+    /// While the left grip drags the panel: the panel in the left controller's space.
+    grab: Option<Mat34>,
+    grip_down: bool,
+    /// Panel width in meters (the left stick changes it while held).
+    width: f32,
     attached: bool,
+    /// Device the panel is attached to (0 = headset) and where on it.
+    parent: u32,
+    mat: Mat34,
+    /// The left trigger was held on the last check (a press counts once).
+    trigger_down: bool,
+    /// A dot on the panel under the left controller's tip, like a laser dot.
+    cursor: u64,
+    cursor_on: bool,
     /// What was last logged about the devices, to log again only when it changes.
     devices_logged: String,
+}
+
+/// Where the user put the panel: 12 numbers, the panel in the right
+/// controller's space, then its width. No file = the default spot on the wrist.
+fn place_file() -> std::path::PathBuf {
+    markii_core::log::dir().join("painel-vr.txt")
+}
+
+fn load_place() -> Option<(Mat34, f32)> {
+    let s = std::fs::read_to_string(place_file()).ok()?;
+    let v: Vec<f32> = s.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    if !(12..=13).contains(&v.len()) || v.iter().any(|x| !x.is_finite()) {
+        return None;
+    }
+    let mut m = [[0f32; 4]; 3];
+    for r in 0..3 {
+        m[r].copy_from_slice(&v[r * 4..r * 4 + 4]);
+    }
+    Some((m, v.get(12).copied().unwrap_or(PANEL_W).clamp(SIZE_RANGE.0, SIZE_RANGE.1)))
+}
+
+fn save_place(m: &Mat34, width: f32) {
+    let s: Vec<String> = m.iter().flatten().chain(std::iter::once(&width)).map(|x| format!("{x:.5}")).collect();
+    if let Err(e) = std::fs::write(place_file(), s.join(" ")) {
+        markii_core::log::warn(format!("painel VR: não deu para salvar a posição: {e}"));
+    }
+}
+
+/// Inverse of a rigid transform.
+fn invert(m: &Mat34) -> Mat34 {
+    let mut o = [[0f32; 4]; 3];
+    for r in 0..3 {
+        for c in 0..3 {
+            o[r][c] = m[c][r];
+        }
+        o[r][3] = -(0..3).map(|k| m[k][r] * m[k][3]).sum::<f32>();
+    }
+    o
+}
+
+const TILT_DEFAULT: f32 = 0.0;
+const ARM_DEFAULT: f32 = 0.14;
+
+/// Right wrist, watch style: the face sits on top of the wrist behind the
+/// grip, text running along the forearm, turned `tilt` degrees toward the eyes.
+fn wrist_mat(tilt: f32, arm: f32, spin: f32) -> Mat34 {
+    let (ps, pc) = spin.to_radians().sin_cos();
+    mul(&wrist_base(tilt, arm), &[[pc, -ps, 0.0, 0.0], [ps, pc, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]])
+}
+
+fn wrist_base(tilt: f32, arm: f32) -> Mat34 {
+    let (s, c) = tilt.to_radians().sin_cos();
+    // Like a watch on the back of the right wrist: the face looks out of the
+    // back of the hand (controller +X), text runs toward the elbow (+Z) and
+    // its top points away from the body when the arm is raised to look
+    // (controller -Y). It sits a bit below the ring, on the wrist itself.
+    let base: Mat34 = [[0.0, 0.0, 1.0, 0.04], [0.0, -1.0, 0.0, -0.03], [1.0, 0.0, 0.0, arm]];
+    // tilt: turns around the forearm, toward or away from the eyes
+    mul(&base, &[[1.0, 0.0, 0.0, 0.0], [0.0, c, -s, 0.0], [0.0, s, c, 0.0]])
+}
+
+/// Until the right controller shows up: a bit below the line of sight.
+fn front_mat() -> Mat34 {
+    [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, -0.35], [0.0, 0.0, 1.0, -1.1]]
+}
+
+/// a x b for rigid 3x4 transforms.
+fn mul(a: &Mat34, b: &Mat34) -> Mat34 {
+    let mut m = [[0f32; 4]; 3];
+    for r in 0..3 {
+        for c in 0..4 {
+            m[r][c] = (0..3).map(|k| a[r][k] * b[k][c]).sum::<f32>() + if c == 3 { a[r][3] } else { 0.0 };
+        }
+    }
+    m
+}
+
+fn apply(m: &Mat34, p: [f32; 3]) -> [f32; 3] {
+    let mut o = [0f32; 3];
+    for r in 0..3 {
+        o[r] = m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3];
+    }
+    o
+}
+
+/// World point -> panel space (x right, y up, z out of the face), in meters.
+fn to_panel(panel: &Mat34, p: [f32; 3]) -> [f32; 3] {
+    let d = [p[0] - panel[0][3], p[1] - panel[1][3], p[2] - panel[2][3]];
+    let mut o = [0f32; 3];
+    for c in 0..3 {
+        o[c] = panel[0][c] * d[0] + panel[1][c] * d[1] + panel[2][c] * d[2];
+    }
+    o
+}
+
+/// Panel-space point -> pixel from the top left, when it is on the panel.
+fn panel_pixel(l: [f32; 3], width: f32) -> Option<(f32, f32)> {
+    let x = (l[0] / width + 0.5) * W as f32;
+    let y = (0.5 - l[1] / (width * H as f32 / W as f32)) * H as f32;
+    ((0.0..=W as f32).contains(&x) && (0.0..=H as f32).contains(&y)).then_some((x, y))
+}
+
+/// White dot with a dark ring, readable on any theme.
+fn cursor_dot() -> Vec<u8> {
+    let n = CURSOR_PX;
+    let mut px = vec![0u8; n * n * 4];
+    let c = (n as f32 - 1.0) / 2.0;
+    for y in 0..n {
+        for x in 0..n {
+            let d = ((x as f32 - c).powi(2) + (y as f32 - c).powi(2)).sqrt();
+            let r = n as f32 / 2.0 - 1.0;
+            let a = (r - d + 0.5).clamp(0.0, 1.0);
+            let v = if d < r - 4.0 { 255 } else { 30 };
+            let i = (y * n + x) * 4;
+            px[i..i + 4].copy_from_slice(&[v, v, v, (a * 255.0) as u8]);
+        }
+    }
+    px
+}
+
+fn hash(px: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    px.hash(&mut h);
+    h.finish()
 }
 
 impl Session {
@@ -264,60 +433,286 @@ impl Session {
             let get: libloading::Symbol<unsafe extern "C" fn(*const i8, *mut i32) -> isize> = lib.get(b"VR_GetGenericInterface\0").map_err(|e| e.to_string())?;
             let sys = get(b"FnTable:IVRSystem_026\0".as_ptr() as _, &mut err) as *const usize;
             let ov = get(b"FnTable:IVROverlay_028\0".as_ptr() as _, &mut err) as *const usize;
-            let mut s = Self { lib, sys, ov, handle: 0, attached: false, devices_logged: String::new() };
+            let mut s = Self {
+                lib,
+                sys,
+                ov,
+                handles: [0; 2],
+                front: 0,
+                shown: 0,
+                hide_at: None,
+                order: 0,
+                custom: false,
+                grab: None,
+                grip_down: false,
+                width: PANEL_W,
+                attached: false,
+                parent: 0,
+                mat: front_mat(),
+                trigger_down: false,
+                cursor: 0,
+                cursor_on: false,
+                devices_logged: String::new(),
+            };
             if sys.is_null() || ov.is_null() {
                 s.shutdown();
                 return Err("interface do SteamVR indisponível".into());
             }
             let create: extern "C" fn(*const i8, *const i8, *mut u64) -> i32 = std::mem::transmute(*s.ov.add(OV_CREATE));
-            let e = create(b"com.akaineko.markii.wrist\0".as_ptr() as _, b"Mark II\0".as_ptr() as _, &mut s.handle);
-            if e != 0 {
-                s.shutdown();
-                return Err(format!("CreateOverlay {e}"));
-            }
             let width: extern "C" fn(u64, f32) -> i32 = std::mem::transmute(*s.ov.add(OV_SET_WIDTH));
-            width(s.handle, 0.17);
             let alpha: extern "C" fn(u64, f32) -> i32 = std::mem::transmute(*s.ov.add(OV_SET_ALPHA));
-            alpha(s.handle, 0.94);
-            // the other hand's laser works on the panel like a mouse (the mode buttons)
-            let input: extern "C" fn(u64, i32) -> i32 = std::mem::transmute(*s.ov.add(OV_SET_INPUT_METHOD));
-            input(s.handle, INPUT_MOUSE);
-            let scale: extern "C" fn(u64, *const [f32; 2]) -> i32 = std::mem::transmute(*s.ov.add(OV_SET_MOUSE_SCALE));
-            scale(s.handle, &[W as f32, H as f32]);
-            let flag: extern "C" fn(u64, i32, bool) -> i32 = std::mem::transmute(*s.ov.add(OV_SET_FLAG));
-            flag(s.handle, FLAG_INTERACTIVE_IF_VISIBLE, true);
-            let show: extern "C" fn(u64) -> i32 = std::mem::transmute(*s.ov.add(OV_SHOW));
-            show(s.handle);
+            let order: extern "C" fn(u64, u32) -> i32 = std::mem::transmute(*s.ov.add(OV_SET_SORT_ORDER));
+            // No input method and no "interactive" flag: SteamVR keeps the
+            // controllers on the game. The buttons work by touch (see touch()).
+            let keys: [&[u8]; 2] = [b"com.akaineko.markii.wrist\0", b"com.akaineko.markii.wrist2\0"];
+            for (i, key) in keys.iter().enumerate() {
+                let mut h = 0u64;
+                let e = create(key.as_ptr() as _, b"Mark II\0".as_ptr() as _, &mut h);
+                if e != 0 {
+                    s.shutdown();
+                    return Err(format!("CreateOverlay {e}"));
+                }
+                s.handles[i] = h;
+                width(h, PANEL_W);
+                alpha(h, 0.94);
+                order(h, i as u32);
+            }
+            let mut h = 0u64;
+            if create(b"com.akaineko.markii.cursor\0".as_ptr() as _, b"Mark II cursor\0".as_ptr() as _, &mut h) == 0 {
+                s.cursor = h;
+                width(h, 0.012);
+                order(h, u32::MAX); // always over the panel
+                let raw: extern "C" fn(u64, *mut u8, u32, u32, u32) -> i32 = std::mem::transmute(*s.ov.add(OV_SET_RAW));
+                let mut dot = cursor_dot();
+                raw(h, dot.as_mut_ptr(), CURSOR_PX as u32, CURSOR_PX as u32, 4);
+            }
+            s.apply_place();
             Ok(s)
         }
     }
 
-    /// Watch-style on the left controller; until it shows up, a bit below the
-    /// line of sight in front of the headset.
+    /// Attach both overlays to the right controller; until it shows up, in
+    /// front of the headset.
     fn place(&mut self) {
         if self.attached {
             return;
         }
         unsafe {
             let role: extern "C" fn(i32) -> u32 = std::mem::transmute(*self.sys.add(SYS_CONTROLLER_FOR_ROLE));
-            let rel: extern "C" fn(u64, u32, *const Mat34) -> i32 = std::mem::transmute(*self.ov.add(OV_SET_DEVICE_RELATIVE));
-            let left = role(ROLE_LEFT_HAND);
-            if left != INVALID_DEVICE {
-                // tilted -65 degrees around X: faces up and toward the eyes, over the wrist
-                let a: f32 = -65f32.to_radians();
-                let m: Mat34 = [[1.0, 0.0, 0.0, 0.0], [0.0, a.cos(), -a.sin(), 0.03], [0.0, a.sin(), a.cos(), 0.11]];
-                self.attached = rel(self.handle, left, &m) == 0;
+            let right = role(ROLE_RIGHT_HAND);
+            if right != INVALID_DEVICE {
+                self.parent = right;
+                let saved = load_place();
+                self.custom = saved.is_some();
+                self.mat = saved.map_or_else(|| wrist_mat(TILT_DEFAULT, ARM_DEFAULT, 0.0), |p| p.0);
+                self.set_width(saved.map_or(PANEL_W, |p| p.1));
+                self.attached = true;
             } else {
-                let m: Mat34 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, -0.35], [0.0, 0.0, 1.0, -1.1]];
-                rel(self.handle, 0, &m);
+                self.parent = 0;
+                self.mat = front_mat();
+            }
+        }
+        if !self.apply_place() {
+            self.attached = false;
+        }
+    }
+
+    /// "Voltar o painel para o pulso" in Mark II deletes the saved spot.
+    fn check_reset(&mut self) {
+        if self.custom && self.grab.is_none() && !place_file().exists() {
+            self.custom = false;
+            self.mat = wrist_mat(TILT_DEFAULT, ARM_DEFAULT, 0.0);
+            self.apply_place();
+            self.set_width(PANEL_W);
+            markii_core::log::info("painel VR: de volta ao pulso");
+        }
+    }
+
+    fn set_width(&mut self, w: f32) {
+        self.width = w;
+        unsafe {
+            let width: extern "C" fn(u64, f32) -> i32 = std::mem::transmute(*self.ov.add(OV_SET_WIDTH));
+            for &h in &self.handles {
+                width(h, w);
             }
         }
     }
 
-    fn upload(&self, rgba: &mut [u8]) {
+    fn apply_place(&self) -> bool {
+        unsafe {
+            let rel: extern "C" fn(u64, u32, *const Mat34) -> i32 = std::mem::transmute(*self.ov.add(OV_SET_DEVICE_RELATIVE));
+            self.handles.iter().all(|&h| rel(h, self.parent, &self.mat) == 0)
+        }
+    }
+
+    /// Send a picture, only when it changed: on the hidden overlay first,
+    /// then show it and hide the old one.
+    fn upload(&mut self, rgba: &mut [u8]) {
+        let h = hash(rgba);
+        if h == self.shown {
+            return;
+        }
         unsafe {
             let raw: extern "C" fn(u64, *mut u8, u32, u32, u32) -> i32 = std::mem::transmute(*self.ov.add(OV_SET_RAW));
-            raw(self.handle, rgba.as_mut_ptr(), W, H, 4);
+            let show: extern "C" fn(u64) -> i32 = std::mem::transmute(*self.ov.add(OV_SHOW));
+            let hide: extern "C" fn(u64) -> i32 = std::mem::transmute(*self.ov.add(OV_HIDE));
+            let order: extern "C" fn(u64, u32) -> i32 = std::mem::transmute(*self.ov.add(OV_SET_SORT_ORDER));
+            if let Some((old, _)) = self.hide_at.take() {
+                hide(self.handles[old]); // the previous swap is still pending
+            }
+            let back = 1 - self.front;
+            if raw(self.handles[back], rgba.as_mut_ptr(), W, H, 4) != 0 {
+                return;
+            }
+            // on top of the old picture, which stays visible underneath for a moment
+            self.order = self.order.wrapping_add(1);
+            order(self.handles[back], self.order);
+            show(self.handles[back]);
+            if self.shown != 0 {
+                self.hide_at = Some((self.front, Instant::now() + Duration::from_millis(200)));
+            }
+            self.front = back;
+        }
+        self.shown = h;
+    }
+
+    /// Hides the old picture once the new one has surely reached the headset.
+    fn finish_swap(&mut self) {
+        if let Some((old, at)) = self.hide_at {
+            if Instant::now() >= at {
+                unsafe {
+                    let hide: extern "C" fn(u64) -> i32 = std::mem::transmute(*self.ov.add(OV_HIDE));
+                    hide(self.handles[old]);
+                }
+                self.hide_at = None;
+            }
+        }
+    }
+
+    /// Where the left controller's tip is over the panel (pixels from the top
+    /// left, while it is close), and a click when the left trigger is pressed
+    /// there. Also moves the cursor dot.
+    /// Holding the left grip with the dot on the panel drags it; letting go
+    /// leaves it there (on the right controller) and saves the spot.
+    fn probe(&mut self) -> (Option<(f32, f32)>, Option<(f32, f32)>) {
+        let Some((left, lp, pp)) = self.hands() else {
+            self.move_cursor(None);
+            self.grab = None;
+            return (None, None);
+        };
+        let (trigger, grip, stick) = self.buttons(left);
+        let (pressed, grabbed) = (trigger && !self.trigger_down, grip && !self.grip_down);
+        (self.trigger_down, self.grip_down) = (trigger, grip);
+        if let Some(off) = self.grab {
+            if grip {
+                self.mat = mul(&invert(&pp), &mul(&lp, &off));
+                self.apply_place();
+                if stick.abs() > 0.3 {
+                    // ~2x bigger / smaller per second with the stick all the way
+                    let w = (self.width * (1.0 + 0.025 * stick)).clamp(SIZE_RANGE.0, SIZE_RANGE.1);
+                    self.set_width(w);
+                }
+                return (None, None);
+            }
+            self.grab = None;
+            if self.attached {
+                save_place(&self.mat, self.width);
+                self.custom = true;
+                markii_core::log::info("painel VR: posição nova salva");
+            }
+        }
+        let panel = mul(&pp, &self.mat);
+        let l = to_panel(&panel, apply(&lp, TIP));
+        let over = (l[2] > -BEHIND && l[2] < CURSOR_NEAR).then(|| panel_pixel(l, self.width)).flatten();
+        if grabbed && over.is_some() && self.attached {
+            self.grab = Some(mul(&invert(&lp), &panel));
+            self.move_cursor(None);
+            return (None, None);
+        }
+        self.move_cursor(over.map(|_| l));
+        (over, over.filter(|_| pressed))
+    }
+
+    /// Left trigger and grip, read like fpsVR / OVR Toolkit do (legacy state,
+    /// so nothing is taken away from the game; the game sees the presses too).
+    fn buttons(&self, left: u32) -> (bool, bool, f32) {
+        let (size, pressed_at, axis_at) = STATE;
+        let mut st = [0u8; 64];
+        let ok = unsafe {
+            let get: extern "C" fn(u32, *mut u8, u32) -> bool = std::mem::transmute(*self.sys.add(SYS_CONTROLLER_STATE));
+            get(left, st.as_mut_ptr(), size as u32)
+        };
+        if !ok {
+            return (false, false, 0.0);
+        }
+        let pressed = u64::from_le_bytes(st[pressed_at..pressed_at + 8].try_into().unwrap());
+        let axis = |i: usize| f32::from_le_bytes(st[axis_at + i * 8..axis_at + i * 8 + 4].try_into().unwrap());
+        // half-pulled counts while already held, so a shaky finger is one press
+        let held = |was: bool, v: f32| v > if was { 0.4 } else { 0.75 };
+        (
+            pressed & BUTTON_TRIGGER != 0 || held(self.trigger_down, axis(0)),
+            pressed & BUTTON_GRIP != 0 || held(self.grip_down, axis(1)),
+            // rAxis[0].y: the stick, up = +1
+            f32::from_le_bytes(st[axis_at - 4..axis_at].try_into().unwrap()),
+        )
+    }
+
+    /// The left controller, its pose and the pose of the panel's parent.
+    fn hands(&self) -> Option<(u32, Mat34, Mat34)> {
+        let mut raw = vec![0u8; POSE_SIZE * MAX_DEVICES as usize];
+        let left = unsafe {
+            let role: extern "C" fn(i32) -> u32 = std::mem::transmute(*self.sys.add(SYS_CONTROLLER_FOR_ROLE));
+            let poses: extern "C" fn(i32, f32, *mut u8, u32) = std::mem::transmute(*self.sys.add(SYS_POSES));
+            poses(ORIGIN_STANDING, 0.0, raw.as_mut_ptr(), MAX_DEVICES);
+            role(ROLE_LEFT_HAND)
+        };
+        if left == INVALID_DEVICE || left == self.parent {
+            return None;
+        }
+        let pose = |i: u32| -> Option<Mat34> {
+            let b = raw.get(i as usize * POSE_SIZE..(i as usize + 1) * POSE_SIZE)?;
+            if b[76] == 0 {
+                return None; // bPoseIsValid
+            }
+            let mut m = [[0f32; 4]; 3];
+            for r in 0..3 {
+                for c in 0..4 {
+                    let o = (r * 4 + c) * 4;
+                    m[r][c] = f32::from_le_bytes(b[o..o + 4].try_into().ok()?);
+                }
+            }
+            Some(m)
+        };
+        Some((left, pose(left)?, pose(self.parent)?))
+    }
+
+    /// Puts the dot on the panel's face right under the tip, or hides it.
+    fn move_cursor(&mut self, l: Option<[f32; 3]>) {
+        if self.cursor == 0 {
+            return;
+        }
+        unsafe {
+            match l {
+                Some(l) => {
+                    let rel: extern "C" fn(u64, u32, *const Mat34) -> i32 = std::mem::transmute(*self.ov.add(OV_SET_DEVICE_RELATIVE));
+                    let m = mul(&self.mat, &[[1.0, 0.0, 0.0, l[0]], [0.0, 1.0, 0.0, l[1]], [0.0, 0.0, 1.0, 0.004]]);
+                    rel(self.cursor, self.parent, &m);
+                    // fainter while far, solid when about to touch
+                    let alpha: extern "C" fn(u64, f32) -> i32 = std::mem::transmute(*self.ov.add(OV_SET_ALPHA));
+                    alpha(self.cursor, (1.0 - l[2].max(0.0) / CURSOR_NEAR * 0.6).clamp(0.4, 1.0));
+                    if !self.cursor_on {
+                        let show: extern "C" fn(u64) -> i32 = std::mem::transmute(*self.ov.add(OV_SHOW));
+                        show(self.cursor);
+                        self.cursor_on = true;
+                    }
+                }
+                None if self.cursor_on => {
+                    let hide: extern "C" fn(u64) -> i32 = std::mem::transmute(*self.ov.add(OV_HIDE));
+                    hide(self.cursor);
+                    self.cursor_on = false;
+                }
+                None => {}
+            }
         }
     }
 
@@ -390,25 +785,6 @@ impl Session {
         out
     }
 
-    /// Laser clicks on the panel since the last call, in pixels from the top left.
-    fn clicks(&self) -> Vec<(f32, f32)> {
-        let mut out = Vec::new();
-        unsafe {
-            let poll: extern "C" fn(u64, *mut u8, u32) -> bool = std::mem::transmute(*self.ov.add(OV_POLL_EVENT));
-            let mut ev = [0u8; EVENT_SIZE as usize];
-            while poll(self.handle, ev.as_mut_ptr(), EVENT_SIZE) {
-                let kind = u32::from_le_bytes(ev[..4].try_into().unwrap());
-                if kind == EVENT_MOUSE_UP {
-                    // VREvent_t: type, device, age, then VREvent_Mouse_t { x, y, button }
-                    let x = f32::from_le_bytes(ev[12..16].try_into().unwrap());
-                    let y = f32::from_le_bytes(ev[16..20].try_into().unwrap());
-                    out.push((x, H as f32 - y)); // OpenVR's mouse origin is the bottom left
-                }
-            }
-        }
-        out
-    }
-
     /// True when SteamVR asked to quit.
     fn quit_requested(&self) -> bool {
         unsafe {
@@ -432,10 +808,12 @@ impl Session {
 
     fn shutdown(&mut self) {
         unsafe {
-            if self.handle != 0 && !self.ov.is_null() {
+            if !self.ov.is_null() {
                 let destroy: extern "C" fn(u64) -> i32 = std::mem::transmute(*self.ov.add(OV_DESTROY));
-                destroy(self.handle);
-                self.handle = 0;
+                for h in self.handles.iter_mut().chain(std::iter::once(&mut self.cursor)).filter(|h| **h != 0) {
+                    destroy(*h);
+                    *h = 0;
+                }
             }
             if let Ok(f) = self.lib.get::<unsafe extern "C" fn()>(b"VR_ShutdownInternal\0") {
                 f();
@@ -515,7 +893,7 @@ pub fn run_overlay() -> i32 {
             }
             if s.attached != was_attached {
                 was_attached = s.attached;
-                markii_core::log::info(if s.attached { "painel VR: preso ao controle esquerdo" } else { "painel VR: controle esquerdo não encontrado (painel na frente do óculos)" });
+                markii_core::log::info(if s.attached { "painel VR: preso ao pulso direito" } else { "painel VR: controle direito não encontrado (painel na frente do óculos)" });
             }
             if last_bat.elapsed() >= Duration::from_secs(10) {
                 let b = s.batteries();
@@ -525,13 +903,21 @@ pub fn run_overlay() -> i32 {
                 last_bat = Instant::now();
             }
             let c = cfg.lock().unwrap().clone();
+            s.check_reset();
+            s.finish_swap();
             if ui.cfg_mode != c.mode {
                 // set (or changed) in Mark II's settings
                 ui.cfg_mode = c.mode.clone();
                 ui.mode = c.mode.clone();
                 last_draw -= Duration::from_secs(5);
             }
-            for (x, y) in s.clicks() {
+            let (over, tap) = s.probe();
+            let hover = over.and_then(|(x, y)| ui.button_at(x, y));
+            if hover != ui.hover {
+                ui.hover = hover; // light up the button under the dot
+                last_draw -= Duration::from_secs(5);
+            }
+            if let Some((x, y)) = tap {
                 if let Some(m) = ui.click(x, y) {
                     println!("{MODE_MARK}{m}");
                     markii_core::log::info(format!("painel VR: modo {m}"));
@@ -549,7 +935,8 @@ pub fn run_overlay() -> i32 {
                 s.upload(&mut px);
                 last_draw = Instant::now();
             }
-            std::thread::sleep(Duration::from_millis(100));
+            // ~30 checks a second, so a quick touch is not missed
+            std::thread::sleep(Duration::from_millis(33));
         }
         s.shutdown();
         println!("{BATTERY_MARK}[]");
@@ -731,6 +1118,8 @@ struct Ui {
     cfg_mode: String,
     /// In HUD the buttons hide; a tap brings them back for a few seconds.
     bar_until: Option<Instant>,
+    /// Button under the cursor dot.
+    hover: Option<usize>,
     bats: Vec<VrBattery>,
     est: BatteryEst,
 }
@@ -752,19 +1141,23 @@ impl Ui {
         self.mode() != "hud" || self.bar_until.is_some_and(|t| t > Instant::now())
     }
 
-    /// A laser click at (x, y). Returns the new mode when one was picked.
+    fn button_at(&self, x: f32, y: f32) -> Option<usize> {
+        if !self.bar_visible() || !(BAR_Y..=BAR_Y + BAR_H).contains(&y) {
+            return None;
+        }
+        (0..4).find(|&i| {
+            let (bx, _, bw) = bar_button(i);
+            (bx..=bx + bw).contains(&x)
+        })
+    }
+
+    /// A touch at (x, y). Returns the new mode when one was picked.
     fn click(&mut self, x: f32, y: f32) -> Option<&'static str> {
         if !self.bar_visible() {
             self.bar_until = Some(Instant::now() + Duration::from_secs(8));
             return None;
         }
-        if !(BAR_Y..=BAR_Y + BAR_H).contains(&y) {
-            return None;
-        }
-        let i = (0..4).find(|&i| {
-            let (bx, _, bw) = bar_button(i);
-            (bx..=bx + bw).contains(&x)
-        })?;
+        let i = self.button_at(x, y)?;
         let m = MODES[i].0;
         self.mode = m.to_string();
         self.bar_until = None;
@@ -1005,6 +1398,10 @@ fn render(s: Option<&Snapshot>, font: Option<&ab_glyph::FontVec>, ui: &Ui, cfg: 
             if on {
                 cv.rrect_line(x + 1.0, y + 1.0, w - 2.0, BAR_H - 2.0, 9.0, p.accent, 2.0);
             }
+            if ui.hover == Some(i) {
+                cv.rrect(x, y, w, BAR_H, 9.0, p.text, 40);
+                cv.rrect_line(x + 1.0, y + 1.0, w - 2.0, BAR_H - 2.0, 9.0, p.text, 2.0);
+            }
             cv.text_center(font, label, x + w / 2.0, y + 28.0, 18.0, if on { p.accent } else { p.muted });
         }
     }
@@ -1190,4 +1587,27 @@ pub fn preview_png(path: &std::path::Path, s: &Snapshot) -> Result<(), String> {
         enc.write_header().and_then(|mut w| w.write_image_data(&px)).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn touch_maps_to_pixels() {
+        // right controller somewhere in the room, turned 90 degrees around Y
+        let ctrl: Mat34 = [[0.0, 0.0, 1.0, 0.3], [0.0, 1.0, 0.0, 1.1], [-1.0, 0.0, 0.0, -0.4]];
+        let panel = mul(&ctrl, &wrist_mat(TILT_DEFAULT, ARM_DEFAULT, 35.0));
+        // center of the panel, 1 cm above its face
+        let p = apply(&panel, [0.0, 0.0, 0.01]);
+        let l = to_panel(&panel, p);
+        assert!(l[2] > 0.0099 && l[2] < 0.0101);
+        let (x, y) = panel_pixel(l, PANEL_W).unwrap();
+        assert!((x - W as f32 / 2.0).abs() < 0.5 && (y - H as f32 / 2.0).abs() < 0.5);
+        // near the bottom left corner of the picture -> near (0, H)
+        let (x, y) = panel_pixel(to_panel(&panel, apply(&panel, [-PANEL_W * 0.49, -PANEL_H * 0.49, 0.0])), PANEL_W).unwrap();
+        assert!((x - W as f32 * 0.01).abs() < 0.5 && (y - H as f32 * 0.99).abs() < 0.5);
+        // off the panel
+        assert!(panel_pixel(to_panel(&panel, apply(&panel, [PANEL_W, 0.0, 0.0])), PANEL_W).is_none());
+    }
 }

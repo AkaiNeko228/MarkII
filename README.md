@@ -149,7 +149,7 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 
 ## v0.7.0
 
-- **Painel no SteamVR**: botão **VR** no topo (ou Configurações → Realidade virtual) mostra CPU, GPU, RAM, ventoinhas e alertas no pulso esquerdo dentro do SteamVR (Quest via Link/Air Link/Virtual Desktop, Index, Vive...). Desligado por padrão.
+- **Painel no SteamVR**: botão **VR** no topo (ou Configurações → Realidade virtual) mostra CPU, GPU, RAM, ventoinhas e alertas no pulso direito dentro do SteamVR (Quest via Link/Air Link/Virtual Desktop, Index, Vive...). Desligado por padrão.
   - Roda num processo separado (`markii --vr-overlay`) que recebe os números do Mark II pelo stdin: não abre o SteamVR sozinho, se solta quando o SteamVR fecha e termina quando o Mark II termina. Desligado, não roda nada.
   - Usa o `openvr_api` oficial da Valve (OpenVR 2.15.6, BSD-3) pela API C; o painel é desenhado em software (tiny-skia + ab_glyph).
 - **App Android** (`android/`, Kotlin, sem bibliotecas extras): janela 2D para Quest 3/3S, Quest 2/Pro, Pico 4 e celulares. Instalação por sideload (adb, SideQuest ou modo desenvolvedor do Pico). O APK é gerado pelo GitHub Actions (`.github/workflows/android.yml`).
@@ -192,7 +192,7 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 
 ## v0.8.0 (beta)
 
-- **Painel do SteamVR com 4 modos**: Relógio (hora no centro, CPU e GPU em anéis), Gráfico (temperaturas dos últimos 5 minutos com a linha do limite), Baterias (óculos e controles em destaque, com estimativa de tempo restante do óculos) e HUD (só uma pílula, o resto transparente). Troca pelos botões embaixo do painel com o laser do outro controle, ou em Configurações → Realidade virtual. O painel segue o tema do Mark II e tem o logo no topo.
+- **Painel do SteamVR com 4 modos**: Relógio (hora no centro, CPU e GPU em anéis), Gráfico (temperaturas dos últimos 5 minutos com a linha do limite), Baterias (óculos e controles em destaque, com estimativa de tempo restante do óculos) e HUD (só uma pílula, o resto transparente). Troca apontando o controle esquerdo para os botões embaixo do painel (aparece um ponto branco) e apertando o gatilho, ou em Configurações → Realidade virtual. O painel segue o tema do Mark II e tem o logo no topo.
 - **Sons**: alerta, alerta resolvido, confirmação e abertura do app, feitos para o Mark II. Cada um pode ser trocado por um .wav seu (Configurações → Alertas).
 - **RGB**: cor manual com R/G/B e matiz (clique ou arraste), ver nos LEDs ao vivo, cor do tema, cor aleatória, apagar LEDs, cores favoritas e degradê de 2 cores.
 - **Animações**: barras que deslizam até o valor novo, painéis entrando em sequência na abertura, alerta pulsando, telas de configuração e RGB aparecendo suavemente e rolagem suave.

@@ -37,7 +37,7 @@ pub struct Config {
     pub cpu_view: String,
     /// "grafite" (default) | "roxo" | "carmesim" | "azul" (GPUI) | "lavanda" | "menta" | "pistache" (dark pastel) | "vicecity" (neon)
     pub theme: String,
-    /// Show the Mark II panel inside SteamVR (left wrist) while SteamVR runs.
+    /// Show the Mark II panel inside SteamVR (right wrist) while SteamVR runs.
     pub vr_overlay: bool,
     /// What the wrist panel shows: "relogio" | "grafico" | "baterias" | "hud".
     pub vr_mode: String,

@@ -1276,7 +1276,7 @@ GPU: {}
                                     .child("BETA"),
                             ),
                     )
-                    .child(toggle("t-vr", "Painel do Mark II no SteamVR (pulso esquerdo)", s.vr_overlay, |s| s.vr_overlay = !s.vr_overlay))
+                    .child(toggle("t-vr", "Painel do Mark II no SteamVR (pulso direito)", s.vr_overlay, |s| s.vr_overlay = !s.vr_overlay))
                     .child(
                         div()
                             .flex()
@@ -1307,7 +1307,19 @@ GPU: {}
                                     .child(name)
                             })),
                     )
-                    .child(small("No óculos, aponte o laser do controle direito para os botões embaixo do painel para trocar de modo.".to_string(), MUTED))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .mt(px(4.))
+                            .child(btn("vr-reset", "Voltar o painel para o pulso", false).on_click(cx.listener(|this, _, _, cx| {
+                                let _ = std::fs::remove_file(markii_core::log::dir().join("painel-vr.txt"));
+                                this.save_msg = "painel de volta ao pulso, no tamanho original".into();
+                                cx.notify();
+                            }))),
+                    )
+                    .child(small("No óculos, aproxime o controle esquerdo do painel: aparece um ponto branco e o botão embaixo dele acende. Gatilho esquerdo: troca de modo. Segurar o grip (botão lateral) esquerdo: arrasta o painel para onde quiser (com ele seguro, o analógico esquerdo para cima/baixo aumenta/diminui); ao soltar, ele fica preso ao controle direito ali e a posição é salva. O painel não pega os controles, mas o jogo também recebe esses botões.".to_string(), MUTED))
                     .child(small(
                         "Aparece quando o SteamVR está aberto (Quest via Link, Air Link ou Virtual Desktop, Index, Vive...). Não abre o SteamVR sozinho e fecha junto com o Mark II.",
                         MUTED,
