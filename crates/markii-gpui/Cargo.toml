@@ -18,6 +18,8 @@ serde_json = "1"
 sysinfo = "0.33"
 # SteamVR overlay: openvr_api is loaded at runtime, the panel is drawn in software
 libloading = "0.8"
+# updater: checks the downloaded release zip
+sha2 = "0.10"
 tiny-skia = "0.11"
 ab_glyph = "0.2"
 

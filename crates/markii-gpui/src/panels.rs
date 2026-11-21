@@ -164,6 +164,66 @@ fn needs_sensors(t: &Telemetry) -> Option<String> {
 
 impl Dashboard {
     // ---------------------------------------------------------------- sensors banner
+    /// "Nova versão" bar (see update.rs).
+    pub(crate) fn update_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
+        use crate::update::{self, State};
+        let st = update::state();
+        let (msg, action): (String, Option<(&'static str, Option<String>)>) = match &st {
+            State::Idle => return None,
+            State::Restarting => {
+                // the update script is waiting for Mark II to close
+                cx.defer(|cx| {
+                    markii_core::log::info("Mark II encerrado para atualizar");
+                    crate::stop_helpers();
+                    cx.quit();
+                });
+                ("Atualizando: o Mark II vai fechar e abrir de novo na versão nova…".into(), None)
+            }
+            State::Available(v, _) if update::can_install() => (format!("Nova versão do Mark II: v{v}."), Some(("Atualizar", None))),
+            State::Available(v, page) => (format!("Nova versão do Mark II: v{v}."), Some(("Ver no GitHub", Some(page.clone())))),
+            State::Working(m) => (format!("Atualizando: {m}"), None),
+            State::Failed(e) => (format!("A atualização não deu certo: {e}"), Some(("Tentar de novo", None))),
+        };
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .px(px(12.))
+                .py(px(8.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(ca(GREEN, 0.45))
+                .bg(ca(GREEN, 0.08))
+                .text_size(px(12.5))
+                .child(div().text_color(c(GREEN)).child("⬆"))
+                .child(div().flex_1().min_w_0().child(msg))
+                .when_some(action, |d, (txt, page)| {
+                    d.child(
+                        div()
+                            .id("update-action")
+                            .px(px(12.))
+                            .py(px(5.))
+                            .rounded(px(4.))
+                            .bg(c(GREEN))
+                            .text_color(c(0x08140a))
+                            .font_family(NUM_FONT)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(12.))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                match &page {
+                                    Some(url) => update::open_page(url),
+                                    None => update::install(),
+                                }
+                                cx.notify();
+                            }))
+                            .child(txt),
+                    )
+                }),
+        )
+    }
+
     pub(crate) fn sensors_bar(&self, t: &Telemetry, cx: &mut Context<Self>) -> Option<Div> {
         let interval = self.cfg.lock().unwrap().interval_ms;
         let (msg, action): (String, Option<(&'static str, bool)>) = match t.lhm_state.as_str() {

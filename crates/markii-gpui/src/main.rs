@@ -6,6 +6,7 @@ mod panels;
 mod rgb_view;
 mod sound;
 mod theme;
+mod update;
 mod view;
 mod vr;
 
@@ -62,6 +63,14 @@ pub const HAS_TRAY: bool = cfg!(windows);
 static HWND: AtomicIsize = AtomicIsize::new(0);
 
 #[cfg(windows)]
+/// Ends OpenRGB, the VR panel and the LAN server: nothing of Mark II stays
+/// running once it closes.
+pub(crate) fn stop_helpers() {
+    markii_core::rgb::global().stop();
+    vr::global().stop();
+    markii_core::remote::global().stop();
+}
+
 mod win {
     /// Usable screen area (without the taskbar) in GPUI's logical pixels: the
     /// work area comes in physical pixels, so divide by the DPI scale (125%, 150%...).
@@ -164,6 +173,7 @@ fn main() {
         sound::set_enabled(c.sounds);
         sound::set_custom(&c.sound_alert, &c.sound_clear, &c.sound_ok, &c.sound_start);
         sound::play(sound::Sound::Start);
+        update::check();
     }
     let pc: Arc<Mutex<Option<PcInfo>>> = Arc::new(Mutex::new(None));
 
@@ -271,9 +281,7 @@ fn main() {
             // nothing is left running in the background.
             window.on_window_should_close(cx, move |_, cx| {
                 markii_core::log::info("Mark II encerrado (janela fechada)");
-                markii_core::rgb::global().stop();
-                vr::global().stop();
-                markii_core::remote::global().stop();
+                stop_helpers();
                 cx.quit();
                 true
             });

@@ -1496,6 +1496,7 @@ impl Render for Dashboard {
                         .flex_col()
                         .gap(px(12.))
                         .child(self.header(&t, cx))
+                        .when_some(self.update_bar(cx), |d, a| d.child(a))
                         .when_some(self.alert_bar(&t), |d, a| d.child(a))
                         .when_some(self.sensors_bar(&t, cx), |d, a| d.child(a))
                         .child(self.sources(&t))

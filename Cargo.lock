@@ -4178,6 +4178,7 @@ dependencies = [
  "png 0.17.16",
  "raw-window-handle",
  "serde_json",
+ "sha2 0.10.9",
  "sysinfo 0.33.1",
  "tiny-skia",
  "tray-icon 0.26.1",
