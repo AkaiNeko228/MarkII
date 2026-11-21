@@ -188,14 +188,16 @@ impl PumpWatch {
     /// A pump on the CPU_FAN header (Thermalright and others tell you to plug it
     /// there): air-cooler fans rarely pass ~2000 rpm, and never with the CPU cool.
     const CPU_HEADER_PUMP_RPM: f64 = 2600.0;
+    /// Many CPUs idle at 60+ °C; at that heat an air-cooler fan is still far from 2600 rpm.
+    const CPU_HEADER_COOL_C: f64 = 70.0;
 
     pub fn update(&mut self, fans: &[Fan], cpu_temp: Option<f64>) {
         for f in fans.iter().filter(|f| generic_fan_re().is_match(&f.label) || cpu_fan_re().is_match(&f.label)) {
-            let pump_rpm = if cpu_fan_re().is_match(&f.label) { Self::CPU_HEADER_PUMP_RPM } else { Self::PUMP_RPM };
+            let (pump_rpm, cool) = if cpu_fan_re().is_match(&f.label) { (Self::CPU_HEADER_PUMP_RPM, Self::CPU_HEADER_COOL_C) } else { (Self::PUMP_RPM, Self::COOL_C) };
             let e = self.seen.entry(f.label.clone()).or_default();
             if f.rpm > 0.0 && f.rpm < Self::SLOW_RPM {
                 e.1 = true;
-            } else if f.rpm >= pump_rpm && f.rpm <= 5500.0 && cpu_temp.is_some_and(|t| t <= Self::COOL_C) {
+            } else if f.rpm >= pump_rpm && f.rpm <= 5500.0 && cpu_temp.is_some_and(|t| t <= cool) {
                 e.0 = e.0.saturating_add(1);
             }
         }
@@ -268,6 +270,24 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool, 
             }
         }
     };
+    let mut reason = reason;
+    if kind == "water" && c.pump_rpm.is_none() {
+        // Water cooler (set by hand or found by its USB controller) but no header
+        // named like a pump: the fastest one is the pump (pumps run 1800-4800 rpm,
+        // radiator fans rarely pass 2000), the fastest of the rest the radiator.
+        let mut by_speed: Vec<&Fan> = fans.iter().filter(|f| f.rpm > 0.0).collect();
+        by_speed.sort_by(|a, b| b.rpm.total_cmp(&a.rpm));
+        if let Some(p) = by_speed.first().filter(|f| f.rpm >= 1500.0) {
+            c.pump_rpm = Some(p.rpm);
+            reason += &format!(" · bomba provável: “{}” ({:.0} rpm, o conector mais rápido)", p.label, p.rpm);
+            if c.cpu_fan_rpm.is_none() || cpu_fan.is_some_and(|f| f.label == p.label) {
+                c.cpu_fan_rpm = by_speed.get(1).map(|f| f.rpm);
+            }
+        }
+    }
+    if !fans.iter().any(|f| f.rpm > 0.0) && mode != "auto" {
+        reason += " · nenhuma ventoinha lida: ative os sensores completos (driver PawnIO e administrador, aviso no topo)";
+    }
     c.kind = kind.into();
     c.confidence = conf.into();
     c.reason = reason;
@@ -330,6 +350,21 @@ mod cooler_tests {
     }
 
     #[test]
+    fn manual_water_finds_the_pump_on_unnamed_headers() {
+        let fan = |l: &str, rpm: f64| Fan { label: l.into(), rpm, ..Default::default() };
+        let fans = [fan("Fan #1", 1100.0), fan("Fan #2", 3300.0), fan("Fan #3", 0.0)];
+        let c = detect("water", None, &fans, true, &[]);
+        assert_eq!((c.pump_rpm, c.cpu_fan_rpm), (Some(3300.0), Some(1100.0)));
+        // CPU_FAN carrying the pump, radiator fans on SYS_FAN
+        let fans = [fan("CPU Fan", 3250.0), fan("System Fan #1", 950.0)];
+        let c = detect("water", None, &fans, true, &[]);
+        assert_eq!((c.pump_rpm, c.cpu_fan_rpm), (Some(3250.0), Some(950.0)));
+        // no fan readings at all: says why
+        let c = detect("water", None, &[], false, &[]);
+        assert!(c.pump_rpm.is_none() && c.reason.contains("sensores completos"));
+    }
+
+    #[test]
     fn thermalright() {
         for yes in ["Thermalright Frozen Notte 360 ARGB", "Frozen Warframe 240", "Thermalright Aqua Elite 360 V3", "Frozen Prism 240", "Thermalright water cooler LCD (USB)", "Grand Vision 360"] {
             assert!(is_cooler_device(yes), "{yes}");
@@ -343,7 +378,7 @@ mod cooler_tests {
         let water = [fan("CPU Fan", 3320.0), fan("System Fan #1", 900.0)];
         let mut w = PumpWatch::default();
         for _ in 0..25 {
-            w.update(&water, Some(42.0));
+            w.update(&water, Some(61.0));
         }
         let c = detect("auto", None, &water, true, &w.pumps());
         assert_eq!((c.kind.as_str(), c.pump_rpm, c.cpu_fan_rpm), ("water", Some(3320.0), None));

@@ -215,6 +215,12 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - **Bomba no conector CPU_FAN** (como a Thermalright manda ligar): um CPU_FAN que fica a 2600+ rpm com a CPU fria conta como bomba, e as ventoinhas do radiador não são confundidas com ela.
 - **RGB**: a tela de RGB explica que water coolers e ventoinhas ARGB ligados na placa-mãe aparecem na zona ARGB da placa-mãe.
 - Corrigido o build para Linux da v0.8.1.
+
+## v0.8.3 (beta)
+
+- **Rotação da bomba e das fans do radiador** com o tipo "Water cooler" escolhido à mão: quando nenhum conector se chama PUMP, o conector mais rápido (1500+ rpm) é a bomba e o seguinte são as fans do radiador. O painel diz qual conector foi escolhido.
+- **Bomba no CPU_FAN** também é reconhecida com a CPU até 70 °C parada (antes, só até 55 °C).
+- Quando nenhuma ventoinha é lida, o painel de refrigeração explica que faltam os sensores completos (driver PawnIO e administrador).
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo
