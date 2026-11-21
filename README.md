@@ -208,6 +208,13 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - **Posição e tamanho livres**: segure o grip esquerdo com o ponto no painel e arraste para onde quiser (fica preso ao controle direito); com ele seguro, o analógico esquerdo aumenta ou diminui. Fica salvo; "Voltar o painel para o pulso" em Configurações desfaz.
 - O painel não pisca mais quando os números mudam.
 - **Atualizador**: ao abrir, o Mark II confere a última versão no GitHub e mostra um aviso com "Atualizar". Baixa o zip, confere o SHA-256, troca os arquivos e reabre. Quem está na v0.8.0 precisa baixar esta à mão; as próximas chegam pelo botão.
+
+## v0.8.2 (beta)
+
+- **Water coolers Thermalright**: Frozen Notte, Magic, Prism, Warframe, Edge, Horizon, Vision e Infinity, Aqua Elite, Grand Vision e Core Vision são reconhecidos, inclusive a tela LCD USB dos modelos com tela.
+- **Bomba no conector CPU_FAN** (como a Thermalright manda ligar): um CPU_FAN que fica a 2600+ rpm com a CPU fria conta como bomba, e as ventoinhas do radiador não são confundidas com ela.
+- **RGB**: a tela de RGB explica que water coolers e ventoinhas ARGB ligados na placa-mãe aparecem na zona ARGB da placa-mãe.
+- Corrigido o build para Linux da v0.8.1.
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo

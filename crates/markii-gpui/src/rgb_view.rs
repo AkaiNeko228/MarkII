@@ -819,6 +819,13 @@ impl Dashboard {
                 .child(color_block)
                 .child(manual)
                 .child(h3("Dispositivos"))
+                .child(
+                    small(
+                        "Water coolers e ventoinhas ARGB sem USB (Thermalright Frozen, Aqua Elite e outros) ligados no conector ARGB 5 V da placa-mãe aparecem dentro da placa-mãe, na zona ARGB / Addressable. Ligados no hub da própria marca, só o controle do hub muda a cor.",
+                        MUTED,
+                    )
+                    .mb(px(8.)),
+                )
                 .children(groups.into_iter().map(|(g, ds)| div().mb(px(8.)).child(small(g.to_string(), MUTED).font_weight(FontWeight::SEMIBOLD)).children(ds.into_iter().map(&dev_row)))),
             Status::Starting | Status::Off => div().py(px(24.)).flex().justify_center().child(small(status.text(), MUTED)),
             Status::Running => div().py(px(16.)).child(small("Nenhum dispositivo RGB encontrado.", TEXT)).child(small(hint, MUTED).mt(px(6.))),

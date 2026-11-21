@@ -176,7 +176,11 @@ fn usb_names() -> Vec<String> {
     if let Ok(rd) = fs::read_dir("/sys/bus/usb/devices") {
         for e in rd.flatten() {
             let p = read(e.path().join("product"));
-            if !p.is_empty() {
+            let id = (read(e.path().join("idVendor")).to_lowercase(), read(e.path().join("idProduct")).to_lowercase());
+            // Thermalright's water cooler screens report a generic name
+            if matches!((id.0.as_str(), id.1.as_str()), ("87ad", "70db") | ("0416", "5302")) {
+                v.push("Thermalright water cooler LCD (USB)".into());
+            } else if !p.is_empty() {
                 v.push(p);
             }
         }
@@ -217,7 +221,7 @@ pub fn collect() -> PcInfo {
         gpu_driver,
         ram,
         disks: disks(),
-        cooling_devices: pick(r"(?i)Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water|Ryujin|Ryuo|ROG|TUF|AORUS|Glacier")
+        cooling_devices: pick(r"(?i)Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water|Ryujin|Ryuo|ROG|TUF|AORUS|Glacier|Thermalright|Frozen|Aqua Elite|Vision")
             .into_iter()
             .filter(|d| crate::pcinfo::is_cooler_device(d))
             .collect(),

@@ -62,7 +62,6 @@ pub const HAS_TRAY: bool = cfg!(windows);
 
 static HWND: AtomicIsize = AtomicIsize::new(0);
 
-#[cfg(windows)]
 /// Ends OpenRGB, the VR panel and the LAN server: nothing of Mark II stays
 /// running once it closes.
 pub(crate) fn stop_helpers() {
@@ -71,6 +70,7 @@ pub(crate) fn stop_helpers() {
     markii_core::remote::global().stop();
 }
 
+#[cfg(windows)]
 mod win {
     /// Usable screen area (without the taskbar) in GPUI's logical pixels: the
     /// work area comes in physical pixels, so divide by the DPI scale (125%, 150%...).

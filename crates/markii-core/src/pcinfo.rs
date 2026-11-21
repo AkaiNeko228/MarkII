@@ -85,7 +85,7 @@ $ram=Get-CimInstance Win32_PhysicalMemory | ForEach-Object { [pscustomobject]@{s
 $arr=@(Get-CimInstance Win32_PhysicalMemoryArray | Where-Object { $_.Use -eq 3 }); $slots=($arr | Measure-Object MemoryDevices -Sum).Sum; $maxkb=($arr | Measure-Object MaxCapacityEx -Sum).Sum
 $rgb=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'RGB|Aura|Mystic Light|Polychrome|LED Controller|Lighting|Chroma|ENE |Spectrix|Fusion|iCUE' -and $_.Name -notmatch 'Audio|Display|Monitor' } | Select-Object -ExpandProperty Name -Unique
 $disks=Get-PhysicalDisk | ForEach-Object { [pscustomobject]@{model=([string]$_.FriendlyName).Trim(); size_gb=[math]::Round($_.Size/1GB); media=[string]$_.MediaType; bus=[string]$_.BusType} }
-$cool=Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water|Ryujin|Ryuo|ROG|TUF|AORUS|Glacier' -and $_.PNPClass -notin @('AudioEndpoint','MEDIA','Net','Keyboard','Mouse','Display','Monitor','SoftwareDevice','Image','Camera','Bluetooth','Printer') } | Select-Object -ExpandProperty Name -Unique
+$cool=Get-CimInstance Win32_PnPEntity | Where-Object { ($_.Name -match 'Kraken|NZXT|Corsair|iCUE|Hydro|Commander|Capellix|Galahad|Lian Li|Asetek|AIO|Liquid|Deepcool|Cooler Master|Aqua|Arctic|EK|Thermaltake|Floe|Pump|Water|Ryujin|Ryuo|ROG|TUF|AORUS|Glacier|Thermalright|Frozen|Aqua Elite|Vision' -and $_.PNPClass -notin @('AudioEndpoint','MEDIA','Net','Keyboard','Mouse','Display','Monitor','SoftwareDevice','Image','Camera','Bluetooth','Printer')) -or $_.DeviceID -match 'VID_87AD&PID_70DB|VID_0416&PID_5302' } | ForEach-Object { if ($_.DeviceID -match 'VID_87AD&PID_70DB|VID_0416&PID_5302') { 'Thermalright water cooler LCD (USB)' } else { $_.Name } } | Select-Object -Unique
 [pscustomobject]@{
  maker=[string]$cs.Manufacturer; model=[string]$cs.Model; board_maker=[string]$bb.Manufacturer; board=[string]$bb.Product; board_version=[string]$bb.Version; ram_slots=[int]$slots; ram_max_gb=[math]::Round($maxkb/1MB); rgb_devices=@($rgb)
  bios=("{0} {1}" -f $bi.Manufacturer,$bi.SMBIOSBIOSVersion).Trim(); os=[string]$os.Caption; os_build=("{0} build {1}" -f $os.Version,$os.BuildNumber)
@@ -148,7 +148,9 @@ pub fn is_cooler_device(name: &str) -> bool {
             r"\brog (ryujin|ryuo|strix lc)|\btuf gaming lc\b|\baorus (waterforce|liquid)|\bwaterforce\b|\bglacier one\b|",
             r"\bgalahad\b|\basetek\b|\bcoreliquid\b|\bmaster ?liquid\b|\bliquid ?freezer\b|\bliquid ?cool|\bwater ?cool|",
             r"\baio\b|\bpump\b|\bek-?(aio|nucleus)\b|\baquacomputer\b|\baquaero\b|\bd5 next\b|\btoughliquid\b|\bfloe\b|",
-            r"\bdeepcool (ls|lt|le|castle|mystique|captain)\d*"
+            r"\bdeepcool (ls|lt|le|castle|mystique|captain)\d*|",
+            r"\bfrozen (notte|magic|prism|warframe|edge|horizon|vision|infinity|guardian)\b|\baqua elite\b|",
+            r"\bthermalright\b.*\b(water ?cooler|lcd|aio)\b|\b(grand|core) vision\b"
         ))
         .unwrap()
     });
@@ -183,13 +185,17 @@ impl PumpWatch {
     const SLOW_RPM: f64 = 1500.0;
     const COOL_C: f64 = 55.0;
     const NEEDED: u32 = 20;
+    /// A pump on the CPU_FAN header (Thermalright and others tell you to plug it
+    /// there): air-cooler fans rarely pass ~2000 rpm, and never with the CPU cool.
+    const CPU_HEADER_PUMP_RPM: f64 = 2600.0;
 
     pub fn update(&mut self, fans: &[Fan], cpu_temp: Option<f64>) {
-        for f in fans.iter().filter(|f| generic_fan_re().is_match(&f.label)) {
+        for f in fans.iter().filter(|f| generic_fan_re().is_match(&f.label) || cpu_fan_re().is_match(&f.label)) {
+            let pump_rpm = if cpu_fan_re().is_match(&f.label) { Self::CPU_HEADER_PUMP_RPM } else { Self::PUMP_RPM };
             let e = self.seen.entry(f.label.clone()).or_default();
             if f.rpm > 0.0 && f.rpm < Self::SLOW_RPM {
                 e.1 = true;
-            } else if f.rpm >= Self::PUMP_RPM && f.rpm <= 5500.0 && cpu_temp.is_some_and(|t| t <= Self::COOL_C) {
+            } else if f.rpm >= pump_rpm && f.rpm <= 5500.0 && cpu_temp.is_some_and(|t| t <= Self::COOL_C) {
                 e.0 = e.0.saturating_add(1);
             }
         }
@@ -225,7 +231,9 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool, 
     let cpu_fan = fans
         .iter()
         .find(|f| cpu_fan_re().is_match(&f.label) && f.rpm > 0.0)
-        .or_else(|| (spinning.len() == 1).then(|| spinning[0]));
+        .or_else(|| (spinning.len() == 1).then(|| spinning[0]))
+        // the CPU_FAN header carries the pump: the radiator fans are elsewhere
+        .filter(|f| unnamed_pump.map_or(true, |p| p.label != f.label));
     let mut c = Cooling {
         pump_rpm: pump.or(unnamed_pump).map(|f| f.rpm),
         cpu_fan_rpm: cpu_fan.map(|f| f.rpm),
@@ -243,7 +251,11 @@ pub fn detect(mode: &str, info: Option<&PcInfo>, fans: &[Fan], hwinfo_ok: bool, 
             } else if let Some(d) = devices.first() {
                 ("water", "medium", format!("controlador de water cooler encontrado: {d}"))
             } else if let Some(p) = unnamed_pump {
-                ("water", "low", format!("“{}” fica a {:.0} rpm mesmo com a CPU fria, como uma bomba (a placa não diz o nome dos conectores)", p.label, p.rpm))
+                if cpu_fan_re().is_match(&p.label) {
+                    ("water", "medium", format!("“{}” fica a {:.0} rpm mesmo com a CPU fria: é a bomba ligada no conector da CPU (como na Thermalright)", p.label, p.rpm))
+                } else {
+                    ("water", "low", format!("“{}” fica a {:.0} rpm mesmo com a CPU fria, como uma bomba (a placa não diz o nome dos conectores)", p.label, p.rpm))
+                }
             } else if let Some(f) = cpu_fan {
                 ("air", "medium", format!("ventoinha da CPU em “{}” ({:.0} rpm) e nenhuma bomba", f.label, f.rpm))
             } else if fans.iter().any(|f| f.rpm > 0.0) {
@@ -315,5 +327,35 @@ mod cooler_tests {
         for no in ["ROG STRIX B550-F GAMING", "TUF GAMING X570-PLUS", "AORUS ELITE", "NVIDIA H100"] {
             assert!(!is_cooler_device(no), "{no}");
         }
+    }
+
+    #[test]
+    fn thermalright() {
+        for yes in ["Thermalright Frozen Notte 360 ARGB", "Frozen Warframe 240", "Thermalright Aqua Elite 360 V3", "Frozen Prism 240", "Thermalright water cooler LCD (USB)", "Grand Vision 360"] {
+            assert!(is_cooler_device(yes), "{yes}");
+        }
+        // air coolers and the rest of the brand
+        for no in ["Thermalright Peerless Assassin 120 SE", "Thermalright Phantom Spirit 120", "Thermalright TL-C12C", "Frozen II"] {
+            assert!(!is_cooler_device(no), "{no}");
+        }
+        let fan = |l: &str, rpm: f64| Fan { label: l.into(), rpm, ..Default::default() };
+        // pump on CPU_FAN at ~3300 rpm with the CPU cool, radiator fans on SYS_FAN
+        let water = [fan("CPU Fan", 3320.0), fan("System Fan #1", 900.0)];
+        let mut w = PumpWatch::default();
+        for _ in 0..25 {
+            w.update(&water, Some(42.0));
+        }
+        let c = detect("auto", None, &water, true, &w.pumps());
+        assert_eq!((c.kind.as_str(), c.pump_rpm, c.cpu_fan_rpm), ("water", Some(3320.0), None));
+        // air cooler fan on CPU_FAN: fast only when hot, so not a pump
+        let mut a = PumpWatch::default();
+        for _ in 0..25 {
+            a.update(&[fan("CPU Fan", 2700.0)], Some(80.0));
+        }
+        for _ in 0..25 {
+            a.update(&[fan("CPU Fan", 1100.0)], Some(45.0));
+        }
+        assert!(a.pumps().is_empty());
+        assert_eq!(detect("auto", None, &[fan("CPU Fan", 1100.0)], true, &a.pumps()).kind, "air");
     }
 }
