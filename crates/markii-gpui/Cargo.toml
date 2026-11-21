@@ -1,6 +1,6 @@
 [package]
 name = "markii-gpui"
-version = "0.7.4"
+version = "0.8.0"
 edition = "2021"
 description = "Mark II PC monitor - native GPUI front end"
 
@@ -23,7 +23,7 @@ ab_glyph = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.26"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 winresource = "0.1"

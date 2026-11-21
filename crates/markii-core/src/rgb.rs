@@ -316,6 +316,20 @@ impl Client {
     /// Applies one color + effect to a device. `mode` indexes `dev.modes`;
     /// `brightness` is 0..=100 (scaled to the mode's range).
     pub fn apply(&mut self, dev: &Device, mode: usize, rgb: u32, brightness: u8, save: bool) -> Result<(), String> {
+        self.apply2(dev, mode, rgb, None, brightness, save)
+    }
+
+    /// Like `apply`, with an optional second color: per-LED modes get a gradient from
+    /// `rgb` to `rgb2` across each zone; effects that take two colors get both.
+    pub fn apply2(&mut self, dev: &Device, mode: usize, rgb: u32, rgb2: Option<u32>, brightness: u8, save: bool) -> Result<(), String> {
+        self.apply_ex(dev, mode, rgb, rgb2, brightness, save, true)
+    }
+
+    /// `set_mode: false` skips resending the effect when only the LED colors change
+    /// (live preview): fewer USB writes, which on mice and keyboards share the bus
+    /// with the movement / key reports.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_ex(&mut self, dev: &Device, mode: usize, rgb: u32, rgb2: Option<u32>, brightness: u8, save: bool, set_mode: bool) -> Result<(), String> {
         let mut m = dev.modes.get(mode).cloned().ok_or("efeito inválido")?;
         let c = to_orgb(rgb);
         if m.flags & FLAG_HAS_BRIGHTNESS != 0 && m.bright_max != m.bright_min {
@@ -325,19 +339,52 @@ impl Client {
         if m.color_mode == COLORS_MODE_SPECIFIC || (m.flags & FLAG_MODE_COLOR != 0 && m.color_mode != COLORS_PER_LED) {
             let n = (m.colors.len() as u32).max(m.colors_min).max(1) as usize;
             m.colors = vec![c; n];
+            if let Some(b) = rgb2 {
+                if m.colors_max >= 2 {
+                    let n = n.max(2);
+                    m.colors = (0..n).map(|i| if i == 0 { c } else { to_orgb(b) }).collect();
+                }
+            }
             m.color_mode = COLORS_MODE_SPECIFIC;
         }
-        self.update_mode(dev.idx, mode as i32, &m)?;
+        if set_mode || m.color_mode != COLORS_PER_LED || dev.leds == 0 {
+            self.update_mode(dev.idx, mode as i32, &m)?;
+        }
         if m.color_mode == COLORS_PER_LED && dev.leds > 0 {
             // per-LED modes ("Direct"/"Static" on many devices) take the LED colors
             let scale = |v: u32| (v as f64 * brightness as f64 / 100.0).round() as u32;
-            let dim = if m.flags & FLAG_HAS_BRIGHTNESS != 0 { c } else { scale(c & 255) | (scale((c >> 8) & 255) << 8) | (scale((c >> 16) & 255) << 16) };
-            self.update_leds(dev.idx, &vec![dim; dev.leds])?;
+            let dim = |c: u32| if m.flags & FLAG_HAS_BRIGHTNESS != 0 { c } else { scale(c & 255) | (scale((c >> 8) & 255) << 8) | (scale((c >> 16) & 255) << 16) };
+            let leds: Vec<u32> = match rgb2 {
+                Some(b) => gradient_leds(dev, rgb, b).into_iter().map(dim).collect(),
+                None => vec![dim(c); dev.leds],
+            };
+            self.update_leds(dev.idx, &leds)?;
         }
         if save && m.can_save() {
             self.save_mode(dev.idx, mode as i32, &m)?;
         }
         Ok(())
+    }
+}
+
+/// Per-LED colors (OpenRGB order) going from `a` to `b` (0xRRGGBB) across each zone,
+/// so every fan / stick shows the whole gradient. When a zone has a single LED (mouse
+/// logo + scroll wheel) or the zones don't add up to the device's LED count, the
+/// gradient spans the whole device instead.
+pub fn gradient_leds(dev: &Device, a: u32, b: u32) -> Vec<u32> {
+    let lerp = |t: f32| {
+        let ch = |sh: u32| {
+            let (x, y) = (((a >> sh) & 255) as f32, ((b >> sh) & 255) as f32);
+            ((x + (y - x) * t).round() as u32).min(255)
+        };
+        to_orgb((ch(16) << 16) | (ch(8) << 8) | ch(0))
+    };
+    let span = |n: usize| (0..n).map(move |i| lerp(if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 }));
+    let sizes: Vec<usize> = dev.zones.iter().map(|z| z.leds as usize).collect();
+    if !sizes.is_empty() && sizes.iter().sum::<usize>() == dev.leds && sizes.iter().all(|&n| n >= 2) {
+        sizes.into_iter().flat_map(span).collect()
+    } else {
+        span(dev.leds).collect()
     }
 }
 
@@ -596,6 +643,9 @@ pub struct Saved {
     /// 0xRRGGBB
     pub color: u32,
     pub brightness: u8,
+    /// Second color of a gradient (v0.7.5+).
+    #[serde(default)]
+    pub color2: Option<u32>,
 }
 
 /// `%APPDATA%\com.akaineko.markii\rgb.json` (Linux: `~/.config/com.akaineko.markii/rgb.json`).
@@ -646,7 +696,7 @@ pub fn apply_saved() -> Result<String, String> {
                 continue;
             };
             let m = d.modes.iter().position(|m| m.name == s.mode).unwrap_or_else(|| default_mode(d));
-            match c.apply(d, m, s.color, s.brightness, false) {
+            match c.apply2(d, m, s.color, s.color2, s.brightness, false) {
                 Ok(()) => done.push(format!("{}: #{:06X} {}", s.name, s.color, s.mode)),
                 Err(e) => done.push(format!("{}: {e}", s.name)),
             }
@@ -802,4 +852,45 @@ fn live_openrgb() {
         println!("{} [{}] {} modes, {} leds", d.name, d.group(), d.modes.len(), d.leds);
     }
     c.save_profile("MarkIITest").expect("save profile");
+}
+
+/// The user's saved colors (0xRRGGBB), next to rgb.json.
+pub fn favorites_path() -> PathBuf {
+    saved_path().with_file_name("rgb-favoritas.json")
+}
+
+pub fn load_favorites() -> Vec<u32> {
+    std::fs::read_to_string(favorites_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+pub fn save_favorites(v: &[u32]) -> Result<(), String> {
+    let p = favorites_path();
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    std::fs::write(&p, serde_json::to_string(v).unwrap()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod gradient_tests {
+    use super::*;
+
+    #[test]
+    fn gradient_spans_each_zone() {
+        let d = Device { leds: 6, zones: vec![Zone { name: "A".into(), leds: 3 }, Zone { name: "B".into(), leds: 3 }], ..Default::default() };
+        let g = gradient_leds(&d, 0xFF0000, 0x0000FF);
+        assert_eq!(g.len(), 6);
+        assert_eq!(from_orgb(g[0]), 0xFF0000);
+        assert_eq!(from_orgb(g[1]), 0x800080);
+        assert_eq!(from_orgb(g[2]), 0x0000FF);
+        assert_eq!(from_orgb(g[3]), 0xFF0000);
+        // zones that don't add up: one gradient over the device
+        let d = Device { leds: 3, zones: vec![Zone { name: "A".into(), leds: 7 }], ..Default::default() };
+        let g = gradient_leds(&d, 0x000000, 0xFFFFFF);
+        assert_eq!(g.iter().map(|c| from_orgb(*c)).collect::<Vec<_>>(), [0x000000, 0x808080, 0xFFFFFF]);
+        // mouse: logo and wheel, one LED each -> one color on each part
+        let d = Device { leds: 2, zones: vec![Zone { name: "Logo".into(), leds: 1 }, Zone { name: "Wheel".into(), leds: 1 }], ..Default::default() };
+        let g = gradient_leds(&d, 0xFF0000, 0x0000FF);
+        assert_eq!(g.iter().map(|c| from_orgb(*c)).collect::<Vec<_>>(), [0xFF0000, 0x0000FF]);
+    }
 }

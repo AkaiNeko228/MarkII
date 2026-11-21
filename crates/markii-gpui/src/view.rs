@@ -42,6 +42,56 @@ pub struct Dashboard {
     pub rgb: Option<crate::rgb_view::RgbUi>,
     /// Windows firewall state for the LAN server: (rule present?, last message).
     pub fw: Arc<Mutex<(Option<bool>, String)>>,
+    /// Smooth scrolling: the dashboard, the settings sheet and the RGB sheet.
+    pub scroll: [Smooth; 3],
+}
+
+/// Eased scrolling for one scroll container. The wheel still moves the GPUI offset
+/// (instantly); each frame takes that jump back, adds it to a target and glides
+/// there at the screen's frame rate, so the jump itself is never drawn.
+#[derive(Default)]
+pub struct Smooth {
+    pub handle: gpui::ScrollHandle,
+    target: std::cell::Cell<f32>,
+    shown: std::cell::Cell<f32>,
+    last: std::cell::Cell<Option<std::time::Instant>>,
+}
+
+impl Smooth {
+    pub fn frame(&self, window: &mut Window) {
+        let off = self.handle.offset();
+        let cur = f32::from(off.y);
+        let shown = self.shown.get();
+        let max = f32::from(self.handle.max_offset().height).max(0.0);
+        let mut target = self.target.get();
+        if (cur - shown).abs() > 0.01 {
+            target += cur - shown; // the wheel moved it since the last frame
+        }
+        target = target.clamp(-max, 0.0);
+        let now = std::time::Instant::now();
+        let dt = self.last.get().map_or(1.0 / 60.0, |t| now.duration_since(t).as_secs_f32()).min(0.05);
+        let mut s = shown + (target - shown) * (1.0 - (-dt * 16.0).exp());
+        if (target - s).abs() < 0.5 {
+            s = target;
+            self.last.set(None);
+        } else {
+            self.last.set(Some(now));
+            window.request_animation_frame();
+        }
+        self.target.set(target);
+        self.shown.set(s);
+        if (s - cur).abs() > 0.001 {
+            self.handle.set_offset(gpui::point(off.x, px(s)));
+        }
+    }
+
+    /// Back to the top with no glide (a sheet that was closed).
+    pub fn reset(&self) {
+        self.target.set(0.0);
+        self.shown.set(0.0);
+        self.last.set(None);
+        self.handle.set_offset(gpui::point(px(0.), px(0.)));
+    }
 }
 
 // ---------- formatting ----------
@@ -93,16 +143,112 @@ pub(crate) fn panel_el(accent: u32, title: impl Into<SharedString>, right: AnyEl
     panel_logo(accent, None, title, right, alert)
 }
 
-/// Panel whose header starts with a brand mark.
+/// Animation clock in ms (advanced by `Dashboard::animate`), for pulses and easing.
+static CLOCK_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 0..1, breathing about once a second.
+pub(crate) fn pulse() -> f32 {
+    let t = CLOCK_MS.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0;
+    0.5 + 0.5 * (t * 2.0 * std::f32::consts::PI * 0.9).sin()
+}
+
+/// When each sheet ("settings", "rgb") was opened, for its fade-in.
+fn sheets() -> &'static std::sync::Mutex<std::collections::HashMap<&'static str, std::time::Instant>> {
+    static S: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<&'static str, std::time::Instant>>> = std::sync::OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+/// 0..1 eased fade-in of a sheet that is open now; restarts after `sheet_closed`.
+pub(crate) fn sheet_appear(key: &'static str) -> f32 {
+    let mut m = sheets().lock().unwrap();
+    let t0 = *m.entry(key).or_insert_with(std::time::Instant::now);
+    let k = (t0.elapsed().as_secs_f32() / 0.2).min(1.0);
+    1.0 - (1.0 - k) * (1.0 - k)
+}
+
+pub(crate) fn sheet_closed(key: &'static str) {
+    sheets().lock().unwrap().remove(key);
+}
+
+/// Where the user's .wav for each sound is kept in the config.
+fn sound_field(c: &mut Config, s: crate::sound::Sound) -> &mut String {
+    match s {
+        crate::sound::Sound::Alert => &mut c.sound_alert,
+        crate::sound::Sound::Clear => &mut c.sound_clear,
+        crate::sound::Sound::Ok => &mut c.sound_ok,
+        crate::sound::Sound::Start => &mut c.sound_start,
+    }
+}
+
+/// Builds made outside the release scripts (package.ps1 / CI set MARKII_RELEASE)
+/// are test builds and say so: an ALPHA badge, "(alpha)" in the title and the log.
+pub(crate) const ALPHA: bool = option_env!("MARKII_RELEASE").is_none();
+
+/// Per-frame animation state: eased bar values and the panels' entrance.
+/// Items are told apart by call site + their order in the frame, which is stable
+/// from one frame to the next (same panels, same rows, same order).
+struct Anim {
+    bars: std::collections::HashMap<(&'static std::panic::Location<'static>, u32), (f64, u64)>,
+    seen: std::collections::HashMap<&'static std::panic::Location<'static>, u32>,
+    panels: u32,
+    started: Option<std::time::Instant>,
+}
+
+fn anim() -> &'static std::sync::Mutex<Anim> {
+    static A: std::sync::OnceLock<std::sync::Mutex<Anim>> = std::sync::OnceLock::new();
+    A.get_or_init(|| std::sync::Mutex::new(Anim { bars: Default::default(), seen: Default::default(), panels: 0, started: None }))
+}
+
+/// Call at the start of each render.
+pub(crate) fn anim_frame() {
+    let mut a = anim().lock().unwrap();
+    a.seen.clear();
+    a.panels = 0;
+}
+
+/// `target` eased over ~0.35 s from what was shown before (bars glide instead of jumping).
+#[track_caller]
+fn eased(target: f64) -> f64 {
+    let loc = std::panic::Location::caller();
+    let now = CLOCK_MS.load(std::sync::atomic::Ordering::Relaxed);
+    let mut a = anim().lock().unwrap();
+    let n = {
+        let e = a.seen.entry(loc).or_insert(0);
+        *e += 1;
+        *e
+    };
+    let (shown, last) = a.bars.entry((loc, n)).or_insert((target, now));
+    let dt = (now.saturating_sub(*last)) as f64 / 1000.0;
+    *last = now;
+    *shown += (target - *shown) * (1.0 - (-dt * 9.0).exp());
+    if (target - *shown).abs() < 0.05 {
+        *shown = target;
+    }
+    *shown
+}
+
+/// 0..1 entrance of the next panel: they fade and rise in one after another at launch.
+fn panel_entrance() -> f32 {
+    let mut a = anim().lock().unwrap();
+    let i = a.panels;
+    a.panels += 1;
+    let t0 = *a.started.get_or_insert_with(std::time::Instant::now);
+    let k = ((t0.elapsed().as_secs_f32() - 0.05 * i as f32) / 0.35).clamp(0.0, 1.0);
+    1.0 - (1.0 - k) * (1.0 - k) * (1.0 - k)
+}
+
 pub(crate) fn panel_logo(accent: u32, logo: Option<AnyElement>, title: impl Into<SharedString>, right: AnyElement, alert: bool) -> Div {
+    let k = panel_entrance();
     div()
         .relative()
+        .when(k < 1.0, |d| d.opacity(k).top(px((1.0 - k) * 10.0)))
         .flex()
         .flex_col()
         .min_w_0()
         .bg(c(PANEL))
         .border_1()
-        .border_color(if alert { ca(RED, 0.6) } else { c(LINE) })
+        // a panel in alert breathes its red border
+        .border_color(if alert { ca(RED, 0.3 + 0.6 * pulse()) } else { c(LINE) })
         .rounded(px(6.))
         .px(px(14.))
         .pt(px(12.))
@@ -120,10 +266,20 @@ pub(crate) fn panel_logo(accent: u32, logo: Option<AnyElement>, title: impl Into
         )
 }
 
+#[track_caller]
 pub(crate) fn segbar(p: f64, n: usize, color: u32, h: f32) -> Div {
-    let on = ((p.clamp(0.0, 100.0) / 100.0) * n as f64).round() as usize;
+    // glide to the new value; the cell at the edge lights up partly
+    let lit = eased(p.clamp(0.0, 100.0)) / 100.0 * n as f64;
     div().flex().gap(px(1.5)).mt(px(4.)).children((0..n).map(move |i| {
-        div().flex_1().h(px(h)).rounded(px(1.)).bg(if i < on { c(color) } else { c(LINE) })
+        let f = (lit - i as f64).clamp(0.0, 1.0) as f32;
+        let cell = div().flex_1().h(px(h)).rounded(px(1.));
+        if f >= 1.0 {
+            cell.bg(c(color))
+        } else if f <= 0.0 {
+            cell.bg(c(LINE))
+        } else {
+            cell.bg(c(LINE)).child(div().size_full().rounded(px(1.)).bg(ca(color, f)))
+        }
     }))
 }
 
@@ -148,9 +304,10 @@ impl Dashboard {
         let r = markii_core::remote::global().info();
         let yn = |b: bool| if b { "sim" } else { "não" };
         let mut h = format!(
-            "Mark II v{} · log criado em {}
+            "Mark II v{}{} · log criado em {}
 ",
             env!("CARGO_PKG_VERSION"),
+            if ALPHA { " beta (teste)" } else { " beta" },
             markii_core::log::now()
         );
         h += &format!("Sistema: {} {}
@@ -231,6 +388,7 @@ GPU: {}
 
     /// Advance sprite animations by `dt` seconds.
     pub fn animate(&mut self, dt: f32) {
+        CLOCK_MS.fetch_add((dt * 1000.0) as u64, std::sync::atomic::Ordering::Relaxed);
         let Some(t) = &self.t else { return };
         let rpm_cpu = t.cooling.cpu_fan_rpm.unwrap_or(if t.cooling.kind == "unknown" { 0.0 } else { 900.0 });
         let rpm_pump = t.cooling.pump_rpm.unwrap_or(1500.0);
@@ -311,7 +469,23 @@ GPU: {}
                                     .font_weight(FontWeight::BOLD)
                                     .text_size(px(26.))
                                     .child("M A R K")
-                                    .child(div().text_color(c(AMBER)).child("I I")),
+                                    .child(div().text_color(c(AMBER)).child("I I"))
+                                    // Mark II is in beta; test builds also say they aren't published
+                                    .child(
+                                        div()
+                                            .ml(px(4.))
+                                            .px(px(7.))
+                                            .py(px(1.))
+                                            .rounded(px(4.))
+                                            .bg(ca(ORANGE, 0.18))
+                                            .border_1()
+                                            .border_color(c(ORANGE))
+                                            .text_color(c(ORANGE))
+                                            .text_size(px(11.))
+                                            .flex()
+                                            .items_center()
+                                            .child("β BETA"),
+                                    ),
                             )
                             .child(
                                 div()
@@ -320,7 +494,7 @@ GPU: {}
                                     .text_size(px(12.))
                                     .text_color(c(MUTED))
                                     .child(div().text_color(c(TEXT)).font_weight(FontWeight::SEMIBOLD).child(t.host.clone()))
-                                    .child(format!("· ligado há {} · v{}", uptime(t.uptime), env!("CARGO_PKG_VERSION"))),
+                                    .child(format!("· ligado há {} · v{} beta{}", uptime(t.uptime), env!("CARGO_PKG_VERSION"), if ALPHA { " · teste, ainda não publicado" } else { "" })),
                             ),
                     ),
             )
@@ -329,6 +503,14 @@ GPU: {}
                     .flex()
                     .gap(px(8.))
                     .items_center()
+                    .when(rate_ms == 500, |d| {
+                        d.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(c(ORANGE))
+                                .child("⚠ 0.5s gasta mais CPU"),
+                        )
+                    })
                     .child(seg)
                     .child(
                         div()
@@ -398,7 +580,7 @@ GPU: {}
                                 }
                                 cx.notify();
                             }))
-                            .child(if on { "◉  VR ligado" } else { "○  VR" })
+                            .child(if on { "◉  VR ligado · beta" } else { "○  VR · beta" })
                     }),
             )
     }
@@ -884,11 +1066,14 @@ GPU: {}
                 .when(!primary, |d| d.border_1().border_color(c(LINE2)))
                 .child(txt.to_string())
         };
+        let k = sheet_appear("settings");
         div()
             .id("modal")
             .absolute()
             .inset_0()
-            .bg(ca(0, 0.65))
+            .bg(ca(0, 0.65 * k))
+            .opacity(k)
+            .pt(px((1.0 - k) * 24.))
             .flex()
             .items_center()
             .justify_center()
@@ -899,6 +1084,7 @@ GPU: {}
                     .w(px(520.))
                     .max_h(gpui::relative(0.92))
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll[1].handle)
                     .bg(c(PANEL))
                     .relative()
                     .border_1()
@@ -931,6 +1117,91 @@ GPU: {}
                     .child(h3("Alertas"))
                     .child(toggle("t-alerts", "Alertas ativos", s.alerts_enabled, |s| s.alerts_enabled = !s.alerts_enabled))
                     .child(toggle("t-notify", "Notificação do Windows", s.notify, |s| s.notify = !s.notify))
+                    .child(toggle("t-sounds", "Sons (alerta, alerta resolvido, confirmações e abertura)", s.sounds, |s| s.sounds = !s.sounds))
+                    .child(div().mt(px(4.)).text_size(px(12.)).text_color(c(MUTED)).child("Sons do Mark II, ou escolha seus próprios .wav"))
+                    .children(
+                        [
+                            (crate::sound::Sound::Alert, "Alerta", s.sound_alert.clone()),
+                            (crate::sound::Sound::Clear, "Alerta resolvido", s.sound_clear.clone()),
+                            (crate::sound::Sound::Ok, "Confirmação", s.sound_ok.clone()),
+                            (crate::sound::Sound::Start, "Ao abrir o app", s.sound_start.clone()),
+                        ]
+                        .into_iter()
+                        .map(|(snd, name, path)| {
+                            let custom = !path.is_empty();
+                            let has_default = crate::sound::default_wav(snd).is_some();
+                            let small_btn = |id: String, txt: &'static str| {
+                                div()
+                                    .id(SharedString::from(id))
+                                    .px(px(8.))
+                                    .py(px(2.))
+                                    .rounded(px(4.))
+                                    .border_1()
+                                    .border_color(c(LINE2))
+                                    .text_size(px(12.))
+                                    .cursor_pointer()
+                                    .hover(|st| st.bg(c(PANEL2)))
+                                    .child(txt)
+                            };
+                            let tag = format!("{snd:?}");
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .py(px(2.))
+                                .child(div().w(px(120.)).text_size(px(12.5)).child(name))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_size(px(12.))
+                                        .text_color(c(if custom { GREEN } else { DIM }))
+                                        .child(if custom { "seu .wav" } else if has_default { "padrão do Mark II" } else { "sem som" }),
+                                )
+                                .child(small_btn(format!("snd-pick-{tag}"), "Escolher .wav…").on_click(cx.listener(move |_, _, _, cx| {
+                                    let rx = cx.prompt_for_paths(gpui::PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Usar este .wav".into()) });
+                                    cx.spawn(async move |this, cx| {
+                                        let Ok(Ok(Some(paths))) = rx.await else { return };
+                                        let Some(src) = paths.into_iter().next() else { return };
+                                        let r = crate::sound::import_wav(&src, snd);
+                                        let _ = this.update(cx, |v, cx| {
+                                            v.save_msg = match r {
+                                                Ok(dst) => {
+                                                    let d = dst.to_string_lossy().to_string();
+                                                    if let Some(s) = v.settings.as_mut() {
+                                                        *sound_field(s, snd) = d.clone();
+                                                    }
+                                                    crate::sound::play_file(&d);
+                                                    format!("{} → {}", name, src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).into()
+                                                }
+                                                Err(e) => format!("não usei esse arquivo: {e}").into(),
+                                            };
+                                            cx.notify();
+                                        });
+                                    })
+                                    .detach();
+                                })))
+                                .when(custom || has_default, |d| {
+                                    d.child(small_btn(format!("snd-play-{tag}"), "▶").on_click(cx.listener(move |this, _, _, cx| {
+                                        let file = this.settings.as_mut().map(|s| sound_field(s, snd).clone()).unwrap_or_default();
+                                        if file.is_empty() {
+                                            crate::sound::play_default(snd);
+                                        } else if !crate::sound::play_file(&file) {
+                                            this.save_msg = format!("{name}: não consegui ler o .wav").into();
+                                            cx.notify();
+                                        }
+                                    })))
+                                })
+                                .when(custom, |d| {
+                                    d.child(small_btn(format!("snd-del-{tag}"), "✕").on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(s) = this.settings.as_mut() {
+                                            sound_field(s, snd).clear();
+                                        }
+                                        cx.notify();
+                                    })))
+                                })
+                        }),
+                    )
                     .child(
                         div()
                             .flex()
@@ -987,8 +1258,56 @@ GPU: {}
                             cx.notify();
                         }))),
                     )
-                    .child(h3("Realidade virtual"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(h3("Realidade virtual"))
+                            .child(
+                                div()
+                                    .px(px(6.))
+                                    .rounded(px(4.))
+                                    .bg(ca(ORANGE, 0.18))
+                                    .border_1()
+                                    .border_color(c(ORANGE))
+                                    .text_color(c(ORANGE))
+                                    .text_size(px(10.5))
+                                    .child("BETA"),
+                            ),
+                    )
                     .child(toggle("t-vr", "Painel do Mark II no SteamVR (pulso esquerdo)", s.vr_overlay, |s| s.vr_overlay = !s.vr_overlay))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap(px(6.))
+                            .mt(px(4.))
+                            .child(div().text_size(px(12.)).text_color(c(MUTED)).mr(px(4.)).child("O painel mostra"))
+                            .children(crate::vr::MODES.iter().map(|&(key, name)| {
+                                let on = s.vr_mode == key || (key == "relogio" && !crate::vr::MODES.iter().any(|m| m.0 == s.vr_mode));
+                                div()
+                                    .id(SharedString::from(format!("vrmode-{key}")))
+                                    .px(px(10.))
+                                    .py(px(4.))
+                                    .rounded(px(4.))
+                                    .border_1()
+                                    .border_color(c(if on { AMBER } else { LINE2 }))
+                                    .text_color(c(if on { AMBER } else { TEXT }))
+                                    .text_size(px(12.))
+                                    .cursor_pointer()
+                                    .hover(|st| st.bg(c(PANEL2)))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(s) = this.settings.as_mut() {
+                                            s.vr_mode = key.to_string();
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .child(name)
+                            })),
+                    )
+                    .child(small("No óculos, aponte o laser do controle direito para os botões embaixo do painel para trocar de modo.".to_string(), MUTED))
                     .child(small(
                         "Aparece quando o SteamVR está aberto (Quest via Link, Air Link ou Virtual Desktop, Index, Vive...). Não abre o SteamVR sozinho e fecha junto com o Mark II.",
                         MUTED,
@@ -1070,6 +1389,7 @@ GPU: {}
                         this.save_msg = match markii_core::log::save_report(&header) {
                             Ok(p) => {
                                 markii_core::log::reveal(&p);
+                                crate::sound::play(crate::sound::Sound::Ok);
                                 format!("log criado: {}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).into()
                             }
                             Err(e) => format!("não consegui criar o log: {e}").into(),
@@ -1122,7 +1442,16 @@ GPU: {}
 }
 
 impl Render for Dashboard {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        anim_frame();
+        self.scroll[0].frame(window);
+        for (i, open) in [(1, self.settings.is_some()), (2, self.rgb.is_some())] {
+            if open {
+                self.scroll[i].frame(window);
+            } else {
+                self.scroll[i].reset();
+            }
+        }
         let root = div()
             .relative()
             .size_full()
@@ -1145,6 +1474,7 @@ impl Render for Dashboard {
                 .id("scroll")
                 .size_full()
                 .overflow_y_scroll()
+                .track_scroll(&self.scroll[0].handle)
                 .px(px(24.))
                 .pt(px(18.))
                 .pb(px(24.))
@@ -1166,6 +1496,14 @@ impl Render for Dashboard {
                         .child(duo(self.pc_panel(), self.procs_panel(&t))),
                 ),
         )
+        .when(settings.is_none(), |d| {
+            sheet_closed("settings");
+            d
+        })
+        .when(self.rgb.is_none(), |d| {
+            sheet_closed("rgb");
+            d
+        })
         .when_some(settings, |d, s| d.child(self.settings_sheet(&s, cx)))
         .when(self.rgb.is_some(), |d| d.child(self.rgb_sheet(cx)))
     }

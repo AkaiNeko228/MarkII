@@ -119,7 +119,7 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 
 ## v0.5.1
 
-- Temas: **Grafite** (padrão), **Roxo** (preto com roxo escuro), **Lavanda** e **Menta** (pastel escuros), **Algodão-doce** e **Pistache** (pastel claros). Escolha em Configurações → Tema; muda na hora e fica salvo.
+- Temas: **Grafite** (padrão), **Roxo** (preto com roxo escuro), **Lavanda**, **Menta** e **Pistache** (pastel escuros), **Vice City** (neon rosa e ciano). Escolha em Configurações → Tema; muda na hora e fica salvo.
 
 ## v0.5.2
 
@@ -189,6 +189,16 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - Mais controladores reconhecidos: Cooler Master MasterLiquid, ASUS ROG Ryujin/Ryuo/Strix LC, TUF Gaming LC, AORUS Waterforce, Corsair iCUE LINK e H100x/H150x, Phanteks Glacier.
 - O log do painel VR mostra, para cada óculos/controle do SteamVR, o driver, o modelo e o que ele informa sobre a bateria (para entender controles sem bateria, como os do Pico).
 - O log passa a incluir a placa-mãe, a refrigeração detectada (e o motivo), cada ventoinha com rpm e os controladores de refrigeração encontrados.
+
+## v0.8.0 (beta)
+
+- **Painel do SteamVR com 4 modos**: Relógio (hora no centro, CPU e GPU em anéis), Gráfico (temperaturas dos últimos 5 minutos com a linha do limite), Baterias (óculos e controles em destaque, com estimativa de tempo restante do óculos) e HUD (só uma pílula, o resto transparente). Troca pelos botões embaixo do painel com o laser do outro controle, ou em Configurações → Realidade virtual. O painel segue o tema do Mark II e tem o logo no topo.
+- **Sons**: alerta, alerta resolvido, confirmação e abertura do app, feitos para o Mark II. Cada um pode ser trocado por um .wav seu (Configurações → Alertas).
+- **RGB**: cor manual com R/G/B e matiz (clique ou arraste), ver nos LEDs ao vivo, cor do tema, cor aleatória, apagar LEDs, cores favoritas e degradê de 2 cores.
+- **Animações**: barras que deslizam até o valor novo, painéis entrando em sequência na abertura, alerta pulsando, telas de configuração e RGB aparecendo suavemente e rolagem suave.
+- **Temas**: Pistache agora é escuro; novo tema Vice City (neon); Algodão-doce removido.
+- **Menos CPU**: lista de processos atualizada no máximo 1 vez por segundo e animações mais lentas quando o Mark II está atrás de outra janela (um jogo). Aviso quando o intervalo de 0.5s está ligado.
+- O Mark II agora mostra **BETA** no cabeçalho.
 
 ## Próximos sprints
 

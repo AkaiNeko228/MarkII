@@ -4,6 +4,7 @@
 mod draw;
 mod panels;
 mod rgb_view;
+mod sound;
 mod theme;
 mod view;
 mod vr;
@@ -90,6 +91,10 @@ mod win {
     pub fn visible(h: isize) -> bool {
         unsafe { IsWindowVisible(h as _) != 0 && IsIconic(h as _) == 0 }
     }
+    /// Mark II is the window in front (not behind a game or another app).
+    pub fn focused(h: isize) -> bool {
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() as isize == h }
+    }
 }
 
 #[cfg(windows)]
@@ -154,6 +159,12 @@ fn main() {
     let cfg_path = config_path();
     let cfg = Arc::new(Mutex::new(Config::load(&cfg_path)));
     theme::set_theme(&cfg.lock().unwrap().theme);
+    {
+        let c = cfg.lock().unwrap();
+        sound::set_enabled(c.sounds);
+        sound::set_custom(&c.sound_alert, &c.sound_clear, &c.sound_ok, &c.sound_start);
+        sound::play(sound::Sound::Start);
+    }
     let pc: Arc<Mutex<Option<PcInfo>>> = Arc::new(Mutex::new(None));
 
     {
@@ -170,10 +181,16 @@ fn main() {
 
     let (tx, rx) = mpsc::channel::<(Telemetry, Vec<markii_core::Active>)>();
     {
-        let (cfg, pc) = (cfg.clone(), pc.clone());
+        let (cfg, pc, cfg_path) = (cfg.clone(), pc.clone(), cfg_path.clone());
         std::thread::spawn(move || {
             let mut col = Collector::new();
             loop {
+                // a mode picked on the wrist panel with the laser: keep it
+                if let Some(m) = vr::global().take_picked() {
+                    let mut g = cfg.lock().unwrap();
+                    g.vr_mode = m;
+                    let _ = g.save(&cfg_path);
+                }
                 let c = cfg.lock().unwrap().clone();
                 std::thread::sleep(Duration::from_millis(c.interval_ms.clamp(250, 10_000)));
                 let p = pc.lock().unwrap().clone();
@@ -184,6 +201,7 @@ fn main() {
                     let mut snap = markii_core::snapshot::Snapshot::from(&sample.0);
                     snap.vr_batteries = vr::global().batteries();
                     if vr_on {
+                        vr::global().sync(&vr::PanelCfg { mode: &c.vr_mode, theme: &c.theme, cpu_limit: c.cpu_temp, gpu_limit: c.gpu_temp });
                         vr::global().send(&snap);
                     }
                     if remote_on {
@@ -223,7 +241,7 @@ fn main() {
         let bounds = Bounds::centered(display.map(|d| d.id()), size(px(w), px(h)), cx);
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions { title: Some("Mark II".into()), ..Default::default() }),
+            titlebar: Some(TitlebarOptions { title: Some(if view::ALPHA { "Mark II (beta · teste)" } else { "Mark II (beta)" }.into()), ..Default::default() }),
             window_min_size: Some(size(px(940f32.min(w)), px(600f32.min(h)))),
             ..Default::default()
         };
@@ -240,6 +258,7 @@ fn main() {
             save_msg: "".into(),
             rgb: None,
             fw: Default::default(),
+            scroll: Default::default(),
         });
         let v2 = view.clone();
         cx.open_window(opts, move |window, cx| {
@@ -286,6 +305,8 @@ fn main() {
             #[cfg(windows)]
             let _keep = (show_i, quit_i);
             let mut last_anim = Instant::now();
+            let mut had_alerts = false;
+            let mut frame: u32 = 0;
             loop {
                 cx.background_executor().timer(Duration::from_millis(80)).await;
                 #[cfg(windows)]
@@ -294,9 +315,24 @@ fn main() {
                 let visible = win::visible(hwnd);
                 #[cfg(not(windows))]
                 let visible = true;
+                #[cfg(windows)]
+                let focused = win::focused(hwnd);
+                #[cfg(not(windows))]
+                let focused = true;
 
                 // New samples from the collector thread.
                 while let Ok((t, fire)) = rx.try_recv() {
+                    {
+                        let c = cfg.lock().unwrap();
+                        sound::set_enabled(c.sounds);
+                        sound::set_custom(&c.sound_alert, &c.sound_clear, &c.sound_ok, &c.sound_start);
+                    }
+                    if !fire.is_empty() {
+                        sound::play(sound::Sound::Alert);
+                    } else if had_alerts && t.alerts.is_empty() {
+                        sound::play(sound::Sound::Clear);
+                    }
+                    had_alerts = !t.alerts.is_empty();
                     if cfg.lock().unwrap().notify {
                         for a in &fire {
                             notify(&format!("Mark II · {}", a.title), &format!("{:.0} {} (limite {:.0} {})", a.value, a.unit, a.limit, a.unit));
@@ -338,10 +374,13 @@ fn main() {
                     }
                 }
 
-                // Sprite animation (~12 fps) only while the window is on screen.
-                let dt = last_anim.elapsed().as_secs_f32();
-                last_anim = Instant::now();
-                if visible {
+                // Sprite animation only while the window is on screen: ~12 fps in front,
+                // ~4 fps behind another window (a game), where nobody is watching closely.
+                // Redrawing the whole window is most of Mark II's CPU use.
+                frame = frame.wrapping_add(1);
+                if visible && (focused || frame % 3 == 0) {
+                    let dt = last_anim.elapsed().as_secs_f32().min(0.3); // no jump after being hidden
+                    last_anim = Instant::now();
                     let _ = view.update(cx, |v, cx| {
                         v.animate(dt);
                         cx.notify();

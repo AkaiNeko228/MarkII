@@ -16,6 +16,8 @@ dotnet publish sensors -c Release -o target\sensors -v q
 if ($LASTEXITCODE) { throw "dotnet publish failed" }
 
 Write-Host "== GPUI"
+# release build: no ALPHA badge (local test builds show it)
+$env:MARKII_RELEASE = "1"
 cargo build --release -p markii-gpui
 if ($LASTEXITCODE) { throw "GPUI build failed" }
 

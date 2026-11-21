@@ -27,7 +27,7 @@ use nvml_wrapper::Nvml;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
+use sysinfo::{Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 
 #[derive(Serialize, Clone, Default, Debug)]
 pub struct CoreT {
@@ -231,6 +231,10 @@ pub struct Collector {
     lo: u64,
     hi: u64,
     pumps: pcinfo::PumpWatch,
+    /// Top processes, refreshed at most once a second (walking every process is
+    /// the most expensive part of a sample; at 0.5 s it would double the cost).
+    procs: Vec<ProcT>,
+    procs_at: Option<Instant>,
 }
 
 impl Default for Collector {
@@ -257,6 +261,8 @@ impl Collector {
             lo: u64::MAX,
             hi: 0,
             pumps: pcinfo::PumpWatch::default(),
+            procs: Vec::new(),
+            procs_at: None,
         }
     }
 
@@ -296,7 +302,11 @@ impl Collector {
 
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
-        self.sys.refresh_processes(ProcessesToUpdate::All, true);
+        let procs_due = self.procs_at.is_none_or(|t| t.elapsed().as_millis() >= 950);
+        if procs_due {
+            // only what the list shows: CPU and memory (no paths, command lines, disk I/O)
+            self.sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().with_cpu().with_memory());
+        }
         self.nets.refresh(true);
         if self.tick % 10 == 0 {
             self.disks.refresh(true);
@@ -364,19 +374,24 @@ impl Collector {
         let hc = hwsnap.as_ref().map(|h| &h.cpu);
 
         let (rx, tx) = self.nets.iter().fold((0u64, 0u64), |(r, t), (_, d)| (r + d.received(), t + d.transmitted()));
-        let mut procs: Vec<ProcT> = self
-            .sys
-            .processes()
-            .values()
-            .filter(|p| p.pid().as_u32() != 0)
-            .map(|p| ProcT {
-                name: p.name().to_string_lossy().trim_end_matches(".exe").to_string(),
-                cpu: p.cpu_usage() / cpu_count,
-                mem: p.memory(),
-            })
-            .collect();
-        procs.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
-        procs.truncate(6);
+        if procs_due {
+            self.procs_at = Some(Instant::now());
+            let mut procs: Vec<ProcT> = self
+                .sys
+                .processes()
+                .values()
+                .filter(|p| p.pid().as_u32() != 0)
+                .map(|p| ProcT {
+                    name: p.name().to_string_lossy().trim_end_matches(".exe").to_string(),
+                    cpu: p.cpu_usage() / cpu_count,
+                    mem: p.memory(),
+                })
+                .collect();
+            procs.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
+            procs.truncate(6);
+            self.procs = procs;
+        }
+        let procs = self.procs.clone();
 
         let fans = hwsnap.as_ref().map(|h| h.fans.clone()).unwrap_or_default();
         self.pumps.update(&fans, hc.and_then(|c| c.package));

@@ -36,6 +36,8 @@ jobs:
         run: cargo test -p markii-core --lib
 
       - name: Build
+        env:
+          MARKII_RELEASE: "1"
         run: cargo build --release -p markii-gpui
 
       - name: Package

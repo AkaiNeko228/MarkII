@@ -12,6 +12,14 @@ use std::time::{Duration, Instant};
 pub struct Config {
     pub alerts_enabled: bool,
     pub notify: bool,
+    /// Short sounds when an alert fires / clears and when an action works.
+    pub sounds: bool,
+    /// The user's own .wav for each sound (copied to <config>/sons/); empty = silent.
+    pub sound_alert: String,
+    pub sound_clear: String,
+    pub sound_ok: String,
+    /// Played once when the app opens; empty = Mark II's own.
+    pub sound_start: String,
     pub cpu_temp: f64,
     pub gpu_temp: f64,
     pub ram_pct: f64,
@@ -27,10 +35,12 @@ pub struct Config {
     pub sensors_admin: bool,
     /// CPU panel view: "cores" | "threads" | "both"
     pub cpu_view: String,
-    /// "grafite" (default) | "roxo" | "carmesim" | "azul" (GPUI) | "lavanda" | "menta" (dark pastel) | "algodao" | "pistache" (light pastel)
+    /// "grafite" (default) | "roxo" | "carmesim" | "azul" (GPUI) | "lavanda" | "menta" | "pistache" (dark pastel) | "vicecity" (neon)
     pub theme: String,
     /// Show the Mark II panel inside SteamVR (left wrist) while SteamVR runs.
     pub vr_overlay: bool,
+    /// What the wrist panel shows: "relogio" | "grafico" | "baterias" | "hud".
+    pub vr_mode: String,
     /// Read-only access from the Android app over the local network (off by default).
     pub remote_enabled: bool,
     pub remote_port: u16,
@@ -56,6 +66,12 @@ impl Default for Config {
             cpu_view: "cores".into(),
             theme: "grafite".into(),
             vr_overlay: false,
+            vr_mode: "relogio".into(),
+            sounds: true,
+            sound_alert: String::new(),
+            sound_clear: String::new(),
+            sound_ok: String::new(),
+            sound_start: String::new(),
             remote_enabled: false,
             remote_port: 47820,
             remote_tokens: Vec::new(),
