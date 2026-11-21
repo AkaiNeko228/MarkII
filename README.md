@@ -200,6 +200,14 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - **Menos CPU**: lista de processos atualizada no máximo 1 vez por segundo e animações mais lentas quando o Mark II está atrás de outra janela (um jogo). Aviso quando o intervalo de 0.5s está ligado.
 - O Mark II agora mostra **BETA** no cabeçalho.
 
+
+## v0.8.1 (beta)
+
+- **Painel do SteamVR não prende mais os controles**: o jogo continua respondendo com o painel na tela.
+- **Controle esquerdo**: um ponto branco mostra para onde ele aponta no painel e o botão embaixo acende; o gatilho troca de modo.
+- **Posição e tamanho livres**: segure o grip esquerdo com o ponto no painel e arraste para onde quiser (fica preso ao controle direito); com ele seguro, o analógico esquerdo aumenta ou diminui. Fica salvo; "Voltar o painel para o pulso" em Configurações desfaz.
+- O painel não pisca mais quando os números mudam.
+- **Atualizador**: ao abrir, o Mark II confere a última versão no GitHub e mostra um aviso com "Atualizar". Baixa o zip, confere o SHA-256, troca os arquivos e reabre. Quem está na v0.8.0 precisa baixar esta à mão; as próximas chegam pelo botão.
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo
