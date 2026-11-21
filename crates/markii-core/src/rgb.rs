@@ -28,6 +28,7 @@ const REQUEST_CONTROLLER_DATA: u32 = 1;
 const REQUEST_PROTOCOL_VERSION: u32 = 40;
 const SET_CLIENT_NAME: u32 = 50;
 const PROFILE_SAVE: u32 = 151;
+const RESIZE_ZONE: u32 = 1000;
 const UPDATE_LEDS: u32 = 1050;
 const SET_CUSTOM_MODE: u32 = 1100;
 const UPDATE_MODE: u32 = 1101;
@@ -85,7 +86,21 @@ impl Mode {
 pub struct Zone {
     pub name: String,
     pub leds: u32,
+    pub min: u32,
+    pub max: u32,
 }
+
+impl Zone {
+    /// An addressable (ARGB) header: OpenRGB needs to be told how many LEDs
+    /// are plugged in, and starts at 0 (no color reaches the device).
+    pub fn resizable(&self) -> bool {
+        self.max > self.min
+    }
+}
+
+/// LEDs given to an ARGB header that is still at 0: enough for a cooler and a
+/// few fans (extra LEDs past the end of the chain are simply ignored).
+pub const ARGB_DEFAULT_LEDS: u32 = 60;
 
 #[derive(Clone, Debug, Default)]
 pub struct Device {
@@ -191,10 +206,10 @@ fn parse_device(idx: u32, data: &[u8]) -> Result<Device, String> {
     for _ in 0..nzones {
         let name = r.str()?;
         let _ztype = r.i32()?;
-        let (_min, _max, leds) = (r.u32()?, r.u32()?, r.u32()?);
+        let (min, max, leds) = (r.u32()?, r.u32()?, r.u32()?);
         let mlen = r.u16()? as usize;
         r.take(mlen)?; // matrix map, not needed
-        zones.push(Zone { name, leds });
+        zones.push(Zone { name, leds, min, max });
     }
     let nleds = r.u16()? as usize;
     for _ in 0..nleds {
@@ -295,6 +310,13 @@ impl Client {
 
     pub fn custom_mode(&mut self, dev: u32) -> Result<(), String> {
         self.send(dev, SET_CUSTOM_MODE, &[])
+    }
+
+    /// Sets how many LEDs an ARGB header has.
+    pub fn resize_zone(&mut self, dev: u32, zone: u32, leds: u32) -> Result<(), String> {
+        let mut v = (zone as i32).to_le_bytes().to_vec();
+        v.extend((leds as i32).to_le_bytes());
+        self.send(dev, RESIZE_ZONE, &v)
     }
 
     /// Colors in OpenRGB order, one per LED.
@@ -504,7 +526,56 @@ impl Rgb {
         }
         std::thread::spawn(move || {
             let s = self.bring_up(admin, |_| false);
+            if s == Status::Running {
+                self.size_zones();
+            }
             self.set(s);
+        });
+    }
+
+    /// Gives every ARGB header its LED count: the one the user picked (saved in
+    /// rgb-zonas.json), or ARGB_DEFAULT_LEDS for one still at 0.
+    fn size_zones(&self) {
+        let saved = load_zone_sizes();
+        let Ok(mut c) = Client::connect(PORT) else { return };
+        let mut changed = false;
+        for d in self.devices() {
+            for (zi, z) in d.zones.iter().enumerate().filter(|(_, z)| z.resizable()) {
+                let want = saved.get(&zone_key(&d, z)).copied().unwrap_or(if z.leds == 0 { ARGB_DEFAULT_LEDS } else { z.leds }).clamp(z.min, z.max);
+                if want != z.leds && c.resize_zone(d.idx, zi as u32, want).is_ok() {
+                    crate::log::info(format!("RGB: {} · {}: {} LEDs", d.name, z.name, want));
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            std::thread::sleep(Duration::from_millis(300));
+            if let Ok(d) = c.devices() {
+                self.st.lock().unwrap().devices = d;
+            }
+        }
+    }
+
+    /// The user changed how many LEDs an ARGB header has: apply and remember it.
+    pub fn set_zone_size(&'static self, dev: u32, zone: usize, leds: u32) {
+        std::thread::spawn(move || {
+            let Some(d) = self.devices().into_iter().find(|d| d.idx == dev) else { return };
+            let Some(z) = d.zones.get(zone) else { return };
+            let leds = leds.clamp(z.min, z.max);
+            let mut saved = load_zone_sizes();
+            saved.insert(zone_key(&d, z), leds);
+            if let Ok(s) = serde_json::to_string_pretty(&saved) {
+                let _ = std::fs::write(zone_sizes_path(), s);
+            }
+            let Ok(mut c) = Client::connect(PORT) else { return };
+            if c.resize_zone(dev, zone as u32, leds).is_ok() {
+                std::thread::sleep(Duration::from_millis(200));
+                if let Ok(nd) = c.device(dev) {
+                    if let Some(x) = self.st.lock().unwrap().devices.iter_mut().find(|x| x.idx == dev) {
+                        *x = nd;
+                    }
+                }
+            }
         });
     }
 
@@ -649,6 +720,18 @@ pub struct Saved {
 }
 
 /// `%APPDATA%\com.akaineko.markii\rgb.json` (Linux: `~/.config/com.akaineko.markii/rgb.json`).
+fn zone_sizes_path() -> PathBuf {
+    config_dir().parent().map(|p| p.join("rgb-zonas.json")).unwrap_or_else(|| PathBuf::from("rgb-zonas.json"))
+}
+
+fn zone_key(d: &Device, z: &Zone) -> String {
+    format!("{}|{}|{}", d.name, d.location, z.name)
+}
+
+fn load_zone_sizes() -> std::collections::HashMap<String, u32> {
+    std::fs::read_to_string(zone_sizes_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
 pub fn saved_path() -> PathBuf {
     config_dir().parent().map(|p| p.join("rgb.json")).unwrap_or_else(|| PathBuf::from("rgb.json"))
 }
@@ -877,7 +960,7 @@ mod gradient_tests {
 
     #[test]
     fn gradient_spans_each_zone() {
-        let d = Device { leds: 6, zones: vec![Zone { name: "A".into(), leds: 3 }, Zone { name: "B".into(), leds: 3 }], ..Default::default() };
+        let d = Device { leds: 6, zones: vec![Zone { name: "A".into(), leds: 3, ..Default::default() }, Zone { name: "B".into(), leds: 3, ..Default::default() }], ..Default::default() };
         let g = gradient_leds(&d, 0xFF0000, 0x0000FF);
         assert_eq!(g.len(), 6);
         assert_eq!(from_orgb(g[0]), 0xFF0000);
@@ -885,11 +968,11 @@ mod gradient_tests {
         assert_eq!(from_orgb(g[2]), 0x0000FF);
         assert_eq!(from_orgb(g[3]), 0xFF0000);
         // zones that don't add up: one gradient over the device
-        let d = Device { leds: 3, zones: vec![Zone { name: "A".into(), leds: 7 }], ..Default::default() };
+        let d = Device { leds: 3, zones: vec![Zone { name: "A".into(), leds: 7, ..Default::default() }], ..Default::default() };
         let g = gradient_leds(&d, 0x000000, 0xFFFFFF);
         assert_eq!(g.iter().map(|c| from_orgb(*c)).collect::<Vec<_>>(), [0x000000, 0x808080, 0xFFFFFF]);
         // mouse: logo and wheel, one LED each -> one color on each part
-        let d = Device { leds: 2, zones: vec![Zone { name: "Logo".into(), leds: 1 }, Zone { name: "Wheel".into(), leds: 1 }], ..Default::default() };
+        let d = Device { leds: 2, zones: vec![Zone { name: "Logo".into(), leds: 1, ..Default::default() }, Zone { name: "Wheel".into(), leds: 1, ..Default::default() }], ..Default::default() };
         let g = gradient_leds(&d, 0xFF0000, 0x0000FF);
         assert_eq!(g.iter().map(|c| from_orgb(*c)).collect::<Vec<_>>(), [0xFF0000, 0x0000FF]);
     }

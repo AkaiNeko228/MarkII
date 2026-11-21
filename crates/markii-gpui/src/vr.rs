@@ -204,6 +204,7 @@ const OV_SET_DEVICE_RELATIVE: usize = 35;
 const OV_SHOW: usize = 43;
 const OV_SET_RAW: usize = 62;
 const OV_HIDE: usize = 44;
+const OV_POLL_EVENT: usize = 48;
 const OV_SET_SORT_ORDER: usize = 20;
 const SYS_POSES: usize = 12;
 const ORIGIN_STANDING: i32 = 1;
@@ -273,6 +274,8 @@ struct Session {
     grip_down: bool,
     /// Panel width in meters (the left stick changes it while held).
     width: f32,
+    /// Pictures sent, for the "still alive" log line.
+    uploads: u64,
     attached: bool,
     /// Device the panel is attached to (0 = headset) and where on it.
     parent: u32,
@@ -446,6 +449,7 @@ impl Session {
                 grab: None,
                 grip_down: false,
                 width: PANEL_W,
+                uploads: 0,
                 attached: false,
                 parent: 0,
                 mat: front_mat(),
@@ -574,6 +578,7 @@ impl Session {
             self.front = back;
         }
         self.shown = h;
+        self.uploads += 1;
     }
 
     /// Hides the old picture once the new one has surely reached the headset.
@@ -785,6 +790,22 @@ impl Session {
         out
     }
 
+    /// Empties the overlays' event queues. Nothing in them is used (the panel
+    /// takes no input), but every show/hide of the swap adds events, and a queue
+    /// that is never read keeps growing until SteamVR stalls the panel.
+    fn drain_events(&self) {
+        unsafe {
+            let poll: extern "C" fn(u64, *mut u8, u32) -> bool = std::mem::transmute(*self.ov.add(OV_POLL_EVENT));
+            let mut ev = [0u8; EVENT_SIZE as usize];
+            for &h in self.handles.iter().chain(std::iter::once(&self.cursor)).filter(|h| **h != 0) {
+                let mut n = 0;
+                while n < 256 && poll(h, ev.as_mut_ptr(), EVENT_SIZE) {
+                    n += 1;
+                }
+            }
+        }
+    }
+
     /// True when SteamVR asked to quit.
     fn quit_requested(&self) -> bool {
         unsafe {
@@ -883,9 +904,15 @@ pub fn run_overlay() -> i32 {
         let mut last_draw = Instant::now() - Duration::from_secs(5);
         let mut last_place = Instant::now() - Duration::from_secs(5);
         let mut last_bat = Instant::now() - Duration::from_secs(60);
+        let mut alive_log = Instant::now();
         while alive.load(Ordering::SeqCst) {
             if s.quit_requested() {
                 break;
+            }
+            s.drain_events();
+            if alive_log.elapsed() >= Duration::from_secs(600) {
+                markii_core::log::info(format!("painel VR: funcionando ({} imagens enviadas)", s.uploads));
+                alive_log = Instant::now();
             }
             if !s.attached && last_place.elapsed() > Duration::from_secs(2) {
                 s.place();

@@ -221,6 +221,11 @@ As duas versões leem o mesmo `%APPDATA%\com.akaineko.markii\config.json`.
 - **Rotação da bomba e das fans do radiador** com o tipo "Water cooler" escolhido à mão: quando nenhum conector se chama PUMP, o conector mais rápido (1500+ rpm) é a bomba e o seguinte são as fans do radiador. O painel diz qual conector foi escolhido.
 - **Bomba no CPU_FAN** também é reconhecida com a CPU até 70 °C parada (antes, só até 55 °C).
 - Quando nenhuma ventoinha é lida, o painel de refrigeração explica que faltam os sensores completos (driver PawnIO e administrador).
+
+## v0.8.4 (pre-release)
+
+- **RGB de water coolers e fans ARGB na placa-mãe**: o conector ARGB começa com 0 LEDs no OpenRGB, e por isso a cor não chegava. Agora ele recebe 60 LEDs na primeira vez e, na tela de RGB, cada conector ARGB tem "LEDs ligados" para ajustar. Fica salvo.
+- **Painel do SteamVR não congela mais com o tempo**: a fila de eventos do SteamVR é esvaziada a cada volta, e o log registra a cada 10 minutos que o painel continua funcionando.
 ## Próximos sprints
 
 - Sprint 3: histórico gravado em disco e gráficos de longo prazo

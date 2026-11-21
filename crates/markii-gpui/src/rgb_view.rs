@@ -807,6 +807,50 @@ impl Dashboard {
                 )
         };
 
+        // ARGB headers: OpenRGB has to know how many LEDs are plugged in
+        let zone_rows = |d: &rgb::Device| -> Vec<Div> {
+            let dev = d.idx;
+            d.zones
+                .iter()
+                .enumerate()
+                .filter(|(_, z)| z.resizable())
+                .map(|(zi, z)| {
+                    let (leds, min, max) = (z.leds, z.min, z.max);
+                    let step = |sfx: &str, txt: &'static str, delta: i64| {
+                        div()
+                            .id(SharedString::from(format!("z{dev}-{zi}{sfx}")))
+                            .px(px(7.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(c(LINE2))
+                            .cursor_pointer()
+                            .text_color(c(TEXT))
+                            .hover(|s| s.bg(c(PANEL2)))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                let n = (leds as i64 + delta).clamp(min as i64, max as i64) as u32;
+                                rgb::global().set_zone_size(dev, zi, n);
+                                cx.notify();
+                            }))
+                            .child(txt)
+                    };
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .pl(px(28.))
+                        .py(px(4.))
+                        .text_size(px(11.5))
+                        .text_color(c(MUTED))
+                        .child(div().flex_1().min_w_0().child(format!("{} (ARGB): LEDs ligados", z.name)))
+                        .child(step("m10", "−10", -10))
+                        .child(step("m1", "−", -1))
+                        .child(num(format!("{leds}"), 12.).w(px(36.)).flex().justify_center().text_color(c(if leds == 0 { ORANGE } else { TEXT })))
+                        .child(step("p1", "+", 1))
+                        .child(step("p10", "+10", 10))
+                })
+                .collect()
+        };
+
         let hint = if cfg!(windows) {
             "Memória RAM, placa de vídeo e placa-mãe precisam do driver PawnIO e de administrador (ative \"Pedir administrador\" em Configurações). Ventoinhas, coolers e fitas via USB funcionam sem."
         } else {
@@ -821,12 +865,12 @@ impl Dashboard {
                 .child(h3("Dispositivos"))
                 .child(
                     small(
-                        "Water coolers e ventoinhas ARGB sem USB (Thermalright Frozen, Aqua Elite e outros) ligados no conector ARGB 5 V da placa-mãe aparecem dentro da placa-mãe, na zona ARGB / Addressable. Ligados no hub da própria marca, só o controle do hub muda a cor.",
+                        "Water coolers e ventoinhas ARGB sem USB (Thermalright Frozen, Aqua Elite e outros) ligados no conector ARGB 5 V da placa-mãe aparecem dentro da placa-mãe, na zona ARGB / Addressable: em “LEDs ligados” ponha quantos LEDs tem a corrente (na dúvida, deixe 60 ou mais). Ligados no hub da própria marca, só o controle do hub muda a cor.",
                         MUTED,
                     )
                     .mb(px(8.)),
                 )
-                .children(groups.into_iter().map(|(g, ds)| div().mb(px(8.)).child(small(g.to_string(), MUTED).font_weight(FontWeight::SEMIBOLD)).children(ds.into_iter().map(&dev_row)))),
+                .children(groups.into_iter().map(|(g, ds)| div().mb(px(8.)).child(small(g.to_string(), MUTED).font_weight(FontWeight::SEMIBOLD)).children(ds.into_iter().map(|d| div().child(dev_row(d)).children(zone_rows(d)))))),
             Status::Starting | Status::Off => div().py(px(24.)).flex().justify_center().child(small(status.text(), MUTED)),
             Status::Running => div().py(px(16.)).child(small("Nenhum dispositivo RGB encontrado.", TEXT)).child(small(hint, MUTED).mt(px(6.))),
             _ => div()
